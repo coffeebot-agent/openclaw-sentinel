@@ -115,12 +115,33 @@ Watch API changes and fire internal webhook events for orchestration.
 - Bounded retries with backoff
 - Global/per-skill/condition limits
 
-## Open Questions from RFC (conservative defaults applied)
+## Future Improvements
 
-1. **Changed operator memory model**: currently state uses hash + runtime metadata; deeper per-path history is not persisted yet.
-2. **SSE/WebSocket durability**: reconnection behavior is conservative and minimal; production tuning for jitter/circuit breaking can be expanded.
-3. **Dispatch auth**: local webhook dispatch assumes trusted local gateway plane; optional HMAC signing not included yet.
-4. **Backpressure policy**: queueing/drop strategy is currently basic and should be expanded for extreme throughput.
+1. **WebSocket/SSE resilience tuning**
+   - Improve reconnect behavior and dedupe close+error failure handling.
+   - Add stronger circuit-breaker/backoff controls under bursty failures.
+
+2. **State persistence hardening**
+   - Add optional payload redaction or `do-not-persist-payload` mode so `lastPayload` does not store sensitive data on disk.
+   - Keep `changed` semantics while minimizing persisted sensitive fields.
+
+3. **Dispatch integrity hardening**
+   - Add optional HMAC signing for internal webhook dispatch payloads in addition to bearer auth token support.
+   - Validate signature at receiver to prevent tampering in misconfigured local planes.
+
+4. **Regex safety simplification and compatibility policy**
+   - Continue standardizing on `re2` with `re2-wasm` fallback.
+   - Document/centralize behavior for unsupported regex features (e.g., lookahead/backrefs).
+
+5. **Lifecycle completeness**
+   - Add explicit `stopAll()` shutdown path in plugin lifecycle hooks for deterministic cleanup.
+   - Expand startup/reload behavior tests to ensure no orphaned watchers/timers.
+
+6. **Test coverage expansion (priority)**
+   - Add websocket reconnection/error-dedupe tests.
+   - Add retry/backoff timing behavior tests.
+   - Add state file permission assertions and payload persistence tests.
+   - Add dispatch auth matrix tests (token on/off).
 
 ## Development
 
