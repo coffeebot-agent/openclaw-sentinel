@@ -2,9 +2,14 @@
   "name": "@coffeexdev/openclaw-sentinel",
   "version": "0.1.0",
   "description": "Secure declarative gateway-native watcher plugin for OpenClaw",
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "security",
+    "sentinel",
+    "watcher"
+  ],
+  "license": "MIT",
   "bin": {
     "openclaw-sentinel": "dist/cli.js"
   },
@@ -13,34 +18,32 @@
     "README.md",
     "LICENSE"
   ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
-  },
-  "keywords": [
-    "openclaw",
-    "plugin",
-    "watcher",
-    "sentinel",
-    "security"
-  ],
-  "license": "MIT",
-  "engines": {
-    "node": ">=20"
+    "lint": "tsc --noEmit",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check ."
   },
   "dependencies": {
     "re2-wasm": "^1.0.2",
     "ws": "^8.18.3",
     "zod": "^3.24.1"
   },
-  "optionalDependencies": {
-    "re2": "^1.23.3"
-  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/ws": "^8.5.13",
+    "oxfmt": "^0.36.0",
     "typescript": "^5.8.2",
     "vitest": "^3.0.8"
+  },
+  "optionalDependencies": {
+    "re2": "^1.23.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
