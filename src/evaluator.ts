@@ -7,11 +7,16 @@ function getPath(obj: unknown, path: string): unknown {
 
 function safeRegexTest(pattern: string, input: string): boolean {
   if (pattern.length > 256) throw new Error('Regex pattern too long');
+  if (input.length > 4096) throw new Error('Regex input too long');
   // basic catastrophic pattern guard
-  if (/\([^)]*\|[^)]*\)[+*{]/.test(pattern) || /\([^)]*\|[^)]*\)/.test(pattern) && /[+*{]/.test(pattern)) {
+  if (/\([^)]*\|[^)]*\)[+*{]/.test(pattern) || (/\([^)]*\|[^)]*\)/.test(pattern) && /[+*{]/.test(pattern))) {
     throw new Error('Potentially unsafe regex pattern rejected');
   }
-  return new RegExp(pattern).test(input);
+  try {
+    return new RegExp(pattern, 'u').test(input);
+  } catch {
+    throw new Error('Invalid regex pattern');
+  }
 }
 
 export function evaluateCondition(condition: Condition, payload: unknown, previousPayload: unknown): boolean {
