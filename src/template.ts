@@ -20,7 +20,7 @@ export function renderTemplate(template: Record<string, string | number | boolea
     }
     const path = value.slice(2, -1);
     const resolved = getPath(context, path);
-    if (resolved === undefined) throw new Error(`Template placeholder unresolved: `);
+    if (resolved === undefined) throw new Error(`Template placeholder unresolved: ${value}`);
     out[key] = resolved;
   }
   return out;
