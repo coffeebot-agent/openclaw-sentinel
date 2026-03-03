@@ -52,6 +52,7 @@ const watcherSchema = z
         maxMs: z.number().int().min(100).max(300000),
       })
       .strict(),
+    fireOnce: z.boolean().optional(),
     metadata: z.record(z.string()).optional(),
   })
   .strict();

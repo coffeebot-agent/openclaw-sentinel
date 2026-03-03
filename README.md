@@ -90,6 +90,10 @@ openclaw-sentinel disable <watcher-id>
 openclaw-sentinel audit
 ```
 
+### One-shot watchers
+
+Set `"fireOnce": true` to automatically disable a watcher after its first matched event.
+
 ## Example scenarios
 
 ### Sentinel Poker feed monitoring

@@ -45,6 +45,7 @@ export interface WatcherDefinition {
   conditions: Condition[];
   fire: FireConfig;
   retry: RetryPolicy;
+  fireOnce?: boolean;
   metadata?: Record<string, string>;
 }
 

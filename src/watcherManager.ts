@@ -165,6 +165,10 @@ export class WatcherManager {
             timestamp: new Date().toISOString(),
           });
           await this.dispatcher.dispatch(watcher.fire.webhookPath, body);
+          if (watcher.fireOnce) {
+            watcher.enabled = false;
+            await this.stopWatcher(id);
+          }
         }
         await this.persist();
       },
