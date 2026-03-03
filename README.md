@@ -27,6 +27,14 @@ It **does not** execute user-authored code from watcher definitions.
 - `allowedHosts` endpoint enforcement
 - CLI surface: `list`, `status`, `enable`, `disable`, `audit`
 
+## JSON Schema
+
+Formal JSON Schema for sentinel config/watchers is available at:
+
+- `schema/sentinel.schema.json`
+
+You can validate a watcher config document (for example `.sentinel.json`) against this schema in CI or local tooling.
+
 ## Install
 
 ```bash
