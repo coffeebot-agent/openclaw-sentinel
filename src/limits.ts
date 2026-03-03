@@ -1,5 +1,9 @@
 import { SentinelConfig, WatcherDefinition } from './types.js';
 
+function normalizeHost(host: string): string {
+  return host.trim().toLowerCase().replace(/\.$/, '');
+}
+
 export function assertWatcherLimits(config: SentinelConfig, watchers: WatcherDefinition[], incoming: WatcherDefinition): void {
   if (watchers.length >= config.limits.maxWatchersTotal) {
     throw new Error(`Watcher limit reached: ${config.limits.maxWatchersTotal}`);
@@ -17,8 +21,11 @@ export function assertWatcherLimits(config: SentinelConfig, watchers: WatcherDef
 }
 
 export function assertHostAllowed(config: SentinelConfig, endpoint: string): void {
-  const host = new URL(endpoint).host;
-  if (!config.allowedHosts.includes(host)) {
-    throw new Error(`Host not allowed: ${host}`);
+  const parsed = new URL(endpoint);
+  const endpointHost = normalizeHost(parsed.hostname);
+  const endpointHostWithPort = normalizeHost(parsed.host);
+  const allowed = new Set(config.allowedHosts.map(normalizeHost));
+  if (!allowed.has(endpointHost) && !allowed.has(endpointHostWithPort)) {
+    throw new Error(`Host not allowed: ${parsed.host}`);
   }
 }
