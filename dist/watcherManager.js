@@ -1,0 +1,112 @@
+import { evaluateConditions, hashPayload } from './evaluator.js';
+import { assertHostAllowed, assertWatcherLimits } from './limits.js';
+import { defaultStatePath, loadState, saveState } from './stateStore.js';
+import { renderTemplate } from './template.js';
+import { validateWatcherDefinition } from './validator.js';
+import { httpPollStrategy } from './strategies/httpPoll.js';
+import { httpLongPollStrategy } from './strategies/httpLongPoll.js';
+import { sseStrategy } from './strategies/sse.js';
+import { websocketStrategy } from './strategies/websocket.js';
+const backoff = (base, max, failures) => Math.min(max, base * (2 ** failures));
+export class WatcherManager {
+    config;
+    dispatcher;
+    watchers = new Map();
+    runtime = {};
+    stops = new Map();
+    statePath;
+    constructor(config, dispatcher) {
+        this.config = config;
+        this.dispatcher = dispatcher;
+        this.statePath = config.stateFilePath ?? defaultStatePath();
+    }
+    async init() {
+        const state = await loadState(this.statePath);
+        state.watchers.forEach((w) => this.watchers.set(w.id, w));
+        this.runtime = state.runtime;
+        for (const watcher of state.watchers.filter((w) => w.enabled))
+            await this.startWatcher(watcher.id);
+    }
+    async create(input) {
+        const watcher = validateWatcherDefinition(input);
+        assertHostAllowed(this.config, watcher.endpoint);
+        assertWatcherLimits(this.config, this.list(), watcher);
+        if (this.watchers.has(watcher.id))
+            throw new Error(`Watcher already exists: ${watcher.id}`);
+        this.watchers.set(watcher.id, watcher);
+        this.runtime[watcher.id] = { id: watcher.id, consecutiveFailures: 0 };
+        if (watcher.enabled)
+            await this.startWatcher(watcher.id);
+        await this.persist();
+        return watcher;
+    }
+    list() { return [...this.watchers.values()]; }
+    status(id) { return this.runtime[id]; }
+    async enable(id) { const w = this.require(id); w.enabled = true; await this.startWatcher(id); await this.persist(); }
+    async disable(id) { const w = this.require(id); w.enabled = false; await this.stopWatcher(id); await this.persist(); }
+    async remove(id) { await this.stopWatcher(id); this.watchers.delete(id); delete this.runtime[id]; await this.persist(); }
+    require(id) { const w = this.watchers.get(id); if (!w)
+        throw new Error(`Watcher not found: ${id}`); return w; }
+    async startWatcher(id) {
+        if (this.stops.has(id))
+            return;
+        const watcher = this.require(id);
+        const handler = { 'http-poll': httpPollStrategy, websocket: websocketStrategy, sse: sseStrategy, 'http-long-poll': httpLongPollStrategy }[watcher.strategy];
+        const stop = await handler(watcher, async (payload) => {
+            const rt = this.runtime[id] ?? { id, consecutiveFailures: 0 };
+            const prevHash = rt.lastPayloadHash;
+            const prevPayload = prevHash ? { __hash: prevHash } : undefined;
+            const matched = evaluateConditions(watcher.conditions, watcher.match, payload, prevPayload);
+            rt.lastPayloadHash = hashPayload(payload);
+            rt.lastResponseAt = new Date().toISOString();
+            rt.lastEvaluated = rt.lastResponseAt;
+            rt.consecutiveFailures = 0;
+            this.runtime[id] = rt;
+            if (matched) {
+                const body = renderTemplate(watcher.fire.payloadTemplate, {
+                    watcher,
+                    event: { name: watcher.fire.eventName },
+                    payload,
+                    timestamp: new Date().toISOString()
+                });
+                await this.dispatcher.dispatch(watcher.fire.webhookPath, body);
+            }
+            await this.persist();
+        }).catch(async (err) => {
+            const rt = this.runtime[id] ?? { id, consecutiveFailures: 0 };
+            rt.consecutiveFailures += 1;
+            rt.lastError = String(err?.message ?? err);
+            this.runtime[id] = rt;
+            const delay = backoff(watcher.retry.baseMs, watcher.retry.maxMs, rt.consecutiveFailures);
+            if (rt.consecutiveFailures <= watcher.retry.maxRetries && watcher.enabled) {
+                setTimeout(() => this.startWatcher(id).catch(() => undefined), delay);
+            }
+            await this.persist();
+            return async () => undefined;
+        });
+        this.stops.set(id, stop);
+    }
+    async stopWatcher(id) {
+        const stop = this.stops.get(id);
+        if (stop)
+            await Promise.resolve(stop());
+        this.stops.delete(id);
+    }
+    async audit() {
+        const bySkill = this.list().reduce((acc, w) => { acc[w.skillId] = (acc[w.skillId] ?? 0) + 1; return acc; }, {});
+        return {
+            totals: {
+                watchers: this.list().length,
+                enabled: this.list().filter((w) => w.enabled).length,
+                errored: Object.values(this.runtime).filter((r) => !!r.lastError).length
+            },
+            bySkill,
+            allowedHosts: this.config.allowedHosts,
+            limits: this.config.limits,
+            statePath: this.statePath
+        };
+    }
+    async persist() {
+        await saveState(this.statePath, this.list(), this.runtime);
+    }
+}
