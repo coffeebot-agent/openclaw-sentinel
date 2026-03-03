@@ -55,10 +55,10 @@ export class WatcherManager {
     const handler = ({ 'http-poll': httpPollStrategy, websocket: websocketStrategy, sse: sseStrategy, 'http-long-poll': httpLongPollStrategy } as const)[watcher.strategy];
     const stop = await handler(watcher, async (payload) => {
       const rt = this.runtime[id] ?? { id, consecutiveFailures: 0 };
-      const prevHash = rt.lastPayloadHash;
-      const prevPayload = prevHash ? { __hash: prevHash } : undefined;
-      const matched = evaluateConditions(watcher.conditions, watcher.match, payload, prevPayload);
+      const previousPayload = rt.lastPayload;
+      const matched = evaluateConditions(watcher.conditions, watcher.match, payload, previousPayload);
       rt.lastPayloadHash = hashPayload(payload);
+      rt.lastPayload = payload;
       rt.lastResponseAt = new Date().toISOString();
       rt.lastEvaluated = rt.lastResponseAt;
       rt.consecutiveFailures = 0;

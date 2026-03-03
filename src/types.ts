@@ -43,6 +43,7 @@ export interface WatcherRuntimeState {
   lastResponseAt?: string;
   consecutiveFailures: number;
   lastPayloadHash?: string;
+  lastPayload?: unknown;
   lastEvaluated?: string;
 }
 
