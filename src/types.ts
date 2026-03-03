@@ -63,6 +63,7 @@ export interface SentinelLimits {
 export interface SentinelConfig {
   allowedHosts: string[];
   localDispatchBase: string;
+  dispatchAuthToken?: string;
   stateFilePath?: string;
   limits: SentinelLimits;
 }

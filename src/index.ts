@@ -5,7 +5,8 @@ import { SentinelConfig } from './types.js';
 export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
   const config: SentinelConfig = {
     allowedHosts: ['api.github.com', 'api.coingecko.com', 'example.com'],
-    localDispatchBase: 'http://127.0.0.1:4389',
+    localDispatchBase: 'http://127.0.0.1:18789',
+    dispatchAuthToken: process.env.SENTINEL_DISPATCH_TOKEN,
     limits: {
       maxWatchersTotal: 200,
       maxWatchersPerSkill: 20,
@@ -17,9 +18,11 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
 
   const manager = new WatcherManager(config, {
     async dispatch(path, body) {
-      await fetch(`${config.localDispatchBase}${path}`, {
+      const headers: Record<string,string> = { 'content-type': 'application/json' };
+      if (config.dispatchAuthToken) headers['authorization'] = `Bearer `;
+      await fetch(``, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
         body: JSON.stringify(body)
       });
     }
