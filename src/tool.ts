@@ -5,7 +5,7 @@ import { z } from "zod";
 import { WatcherManager } from "./watcherManager.js";
 import { SentinelToolSchema } from "./toolSchema.js";
 
-const ParamsSchema = z
+export const ParamsSchema = z
   .object({
     action: z.enum(["create", "enable", "disable", "remove", "status", "list"]),
     id: z.string().optional(),

@@ -35,7 +35,7 @@ const FireConfigSchema = Type.Object({
     Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]),
     {
       description:
-        "Key-value template for the webhook payload. Supports {{mustache}} interpolation from matched response data.",
+        "Key-value template for the webhook payload. Supports ${...} interpolation from matched response data.",
     },
   ),
 });
@@ -92,20 +92,23 @@ const WatcherSchema = Type.Object(
   { description: "Full watcher definition" },
 );
 
-export const SentinelToolSchema = Type.Object({
-  action: Type.Union(
-    [
-      Type.Literal("create"),
-      Type.Literal("enable"),
-      Type.Literal("disable"),
-      Type.Literal("remove"),
-      Type.Literal("status"),
-      Type.Literal("list"),
-    ],
-    { description: "The action to perform" },
-  ),
-  id: Type.Optional(
-    Type.String({ description: "Watcher ID (required for enable/disable/remove/status)" }),
-  ),
-  watcher: Type.Optional(WatcherSchema),
-});
+export const SentinelToolSchema = Type.Object(
+  {
+    action: Type.Union(
+      [
+        Type.Literal("create"),
+        Type.Literal("enable"),
+        Type.Literal("disable"),
+        Type.Literal("remove"),
+        Type.Literal("status"),
+        Type.Literal("list"),
+      ],
+      { description: "The action to perform" },
+    ),
+    id: Type.Optional(
+      Type.String({ description: "Watcher ID (required for enable/disable/remove/status)" }),
+    ),
+    watcher: Type.Optional(WatcherSchema),
+  },
+  { additionalProperties: false },
+);
