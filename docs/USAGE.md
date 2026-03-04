@@ -9,7 +9,7 @@ openclaw plugins install @coffeexdev/openclaw-sentinel
 openclaw gateway restart
 ```
 
-In config, set allowed hosts and optional dispatch token:
+In config, you **must** set `allowedHosts` — no hosts are allowed by default. Watchers can only connect to explicitly listed hostnames:
 
 ```json
 {

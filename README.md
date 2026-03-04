@@ -47,6 +47,8 @@ npm i @coffeexdev/openclaw-sentinel
 
 ## Quick usage
 
+No hosts are allowed by default — you must explicitly configure `allowedHosts` for watchers to connect to any endpoint.
+
 ```ts
 import { createSentinelPlugin } from "@coffeexdev/openclaw-sentinel";
 

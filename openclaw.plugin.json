@@ -7,8 +7,8 @@
       "allowedHosts": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "Hostnames the watchers are permitted to connect to",
-        "default": ["api.github.com", "api.coingecko.com", "example.com"]
+        "description": "Hostnames the watchers are permitted to connect to. Must be explicitly configured — no hosts are allowed by default.",
+        "default": []
       },
       "localDispatchBase": {
         "type": "string",

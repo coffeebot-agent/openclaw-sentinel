@@ -9,7 +9,7 @@ const limitsSchema = z.object({
 });
 
 const configZodSchema = z.object({
-  allowedHosts: z.array(z.string()).default(["api.github.com", "api.coingecko.com", "example.com"]),
+  allowedHosts: z.array(z.string()).default([]),
   localDispatchBase: z.string().url().default("http://127.0.0.1:18789"),
   dispatchAuthToken: z.string().optional(),
   stateFilePath: z.string().optional(),
@@ -28,8 +28,9 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
       allowedHosts: {
         type: "array",
         items: { type: "string" },
-        description: "Hostnames the watchers are permitted to connect to",
-        default: ["api.github.com", "api.coingecko.com", "example.com"],
+        description:
+          "Hostnames the watchers are permitted to connect to. Must be explicitly configured — no hosts are allowed by default.",
+        default: [],
       },
       localDispatchBase: {
         type: "string",

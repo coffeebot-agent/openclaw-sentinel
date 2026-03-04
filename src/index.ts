@@ -6,7 +6,7 @@ import { sentinelConfigSchema } from "./configSchema.js";
 
 export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
   const config: SentinelConfig = {
-    allowedHosts: ["api.github.com", "api.coingecko.com", "example.com"],
+    allowedHosts: [],
     localDispatchBase: "http://127.0.0.1:18789",
     dispatchAuthToken: process.env.SENTINEL_DISPATCH_TOKEN,
     limits: {
