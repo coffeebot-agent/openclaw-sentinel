@@ -1,5 +1,11 @@
 # @coffeexdev/openclaw-sentinel
 
+## 0.1.5
+
+### Patch Changes
+
+- 9ef9bc4: fix tool schema for installation and usage
+
 ## 0.1.4
 
 ### Patch Changes
