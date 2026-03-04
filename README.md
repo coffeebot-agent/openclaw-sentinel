@@ -35,6 +35,10 @@ Formal JSON Schema for sentinel config/watchers is available at:
 
 You can validate a watcher config document (for example `.sentinel.json`) against this schema in CI or local tooling.
 
+## Documentation
+
+- [Usage Guide](docs/USAGE.md)
+
 ## Install
 
 ```bash
@@ -65,8 +69,8 @@ sentinel.register({
 {
   "action": "create",
   "watcher": {
-    "id": "sentinel-poker-alert",
-    "skillId": "skills.sentinel-poker",
+    "id": "sentinel-alert",
+    "skillId": "skills.general-monitor"
     "enabled": true,
     "strategy": "http-poll",
     "endpoint": "https://api.github.com/events",
@@ -75,7 +79,7 @@ sentinel.register({
     "conditions": [{ "path": "type", "op": "eq", "value": "PushEvent" }],
     "fire": {
       "webhookPath": "/internal/sentinel/fire",
-      "eventName": "sentinel-poker_push",
+      "eventName": "sentinel_push",
       "payloadTemplate": {
         "watcher": "${watcher.id}",
         "event": "${event.name}",
@@ -104,7 +108,7 @@ Set `"fireOnce": true` to automatically disable a watcher after its first matche
 
 ## Example scenarios
 
-### Sentinel Poker feed monitoring
+### Feed monitoring example
 
 Watch API changes and fire internal webhook events for orchestration.
 

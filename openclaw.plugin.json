@@ -1,0 +1,11 @@
+{
+  "id": "openclaw-sentinel",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {}
+  },
+  "install": {
+    "npmSpec": "@coffeexdev/openclaw-sentinel"
+  }
+}

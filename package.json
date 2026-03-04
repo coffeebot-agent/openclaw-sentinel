@@ -1,6 +1,6 @@
 {
   "name": "@coffeexdev/openclaw-sentinel",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Secure declarative gateway-native watcher plugin for OpenClaw",
   "keywords": [
     "openclaw",
@@ -20,7 +20,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "openclaw.plugin.json"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -36,7 +37,8 @@
     "format:check": "oxfmt --check .",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "changeset publish"
+    "release": "changeset publish",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "re2-wasm": "^1.0.2",
@@ -60,5 +62,10 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
   }
 }
