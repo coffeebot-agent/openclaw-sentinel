@@ -1,5 +1,11 @@
 # @coffeexdev/openclaw-sentinel
 
+## 0.4.3
+
+### Patch Changes
+
+- 9844255: Fix `sentinel_control` runtime schema compatibility after OpenClaw schema normalization so action payloads compile and validate correctly at runtime.
+
 ## 0.4.2
 
 ### Patch Changes
