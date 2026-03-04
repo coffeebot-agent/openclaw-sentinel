@@ -4,11 +4,19 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "**"
+      - "!README.md"
+      - "!docs/**"
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  group: changeset-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   changeset:
+    if: >-
+      ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release): version packages') }}
     name: Changeset
     permissions:
       pull-requests: write
