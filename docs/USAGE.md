@@ -11,15 +11,27 @@ openclaw gateway restart
 
 In config, you **must** set `allowedHosts` — no hosts are allowed by default. Watchers can only connect to explicitly listed hostnames:
 
-```json
+```json5
 {
-  "sentinel": {
-    "allowedHosts": ["api.github.com", "api.coingecko.com", "status.example.com"],
-    "localDispatchBase": "http://127.0.0.1:18789",
-    "hookSessionKey": "agent:main:main"
-  }
+  plugins: {
+    entries: {
+      "openclaw-sentinel": {
+        enabled: true,
+        config: {
+          allowedHosts: ["api.github.com", "api.coingecko.com", "status.example.com"],
+          localDispatchBase: "http://127.0.0.1:18789",
+          hookSessionKey: "agent:main:main",
+        },
+      },
+    },
+  },
 }
 ```
+
+### Troubleshooting: `Unrecognized key: "sentinel"`
+
+If config validation says `Unrecognized key: "sentinel"`, you are using the legacy root-level key.
+Move the config to `plugins.entries.openclaw-sentinel.config`.
 
 ---
 

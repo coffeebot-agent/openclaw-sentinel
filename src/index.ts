@@ -35,6 +35,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function resolveSentinelPluginConfig(api: OpenClawPluginApi): Partial<SentinelConfig> {
+  const pluginConfig = isRecord(api.pluginConfig)
+    ? (api.pluginConfig as Partial<SentinelConfig>)
+    : {};
+
+  const configRoot = isRecord(api.config) ? (api.config as Record<string, unknown>) : undefined;
+  const legacyRootConfig = configRoot?.sentinel;
+  if (legacyRootConfig === undefined) return pluginConfig;
+
+  api.logger?.warn?.(
+    '[openclaw-sentinel] Detected deprecated root-level config key "sentinel". Move settings to plugins.entries.openclaw-sentinel.config. Root-level "sentinel" may fail with: Unrecognized key: "sentinel".',
+  );
+
+  if (!isRecord(legacyRootConfig)) return pluginConfig;
+  if (Object.keys(pluginConfig).length > 0) return pluginConfig;
+
+  return legacyRootConfig as Partial<SentinelConfig>;
+}
+
 function isDeliveryTarget(value: unknown): value is DeliveryTarget {
   return (
     isRecord(value) &&
@@ -257,6 +276,9 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
       await manager.init();
     },
     register(api: OpenClawPluginApi) {
+      const runtimeConfig = resolveSentinelPluginConfig(api);
+      if (Object.keys(runtimeConfig).length > 0) Object.assign(config, runtimeConfig);
+
       manager.setNotifier({
         async notify(target, message) {
           await notifyDeliveryTarget(api, target, message);

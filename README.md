@@ -18,19 +18,26 @@ Add/update `~/.openclaw/openclaw.json`:
 
 ```json5
 {
-  sentinel: {
-    // Required: watchers can only call endpoints on these hosts.
-    allowedHosts: ["api.github.com", "api.coingecko.com"],
+  plugins: {
+    entries: {
+      "openclaw-sentinel": {
+        enabled: true,
+        config: {
+          // Required: watchers can only call endpoints on these hosts.
+          allowedHosts: ["api.github.com", "api.coingecko.com"],
 
-    // Default dispatch base for internal webhook callbacks.
-    localDispatchBase: "http://127.0.0.1:18789",
+          // Default dispatch base for internal webhook callbacks.
+          localDispatchBase: "http://127.0.0.1:18789",
 
-    // Optional: where /hooks/sentinel events are queued in the LLM loop.
-    hookSessionKey: "agent:main:main",
+          // Optional: where /hooks/sentinel events are queued in the LLM loop.
+          hookSessionKey: "agent:main:main",
 
-    // Optional: bearer token used for dispatch calls back to gateway.
-    // Set this to your gateway auth token when gateway auth is enabled.
-    // dispatchAuthToken: "<gateway-token>"
+          // Optional: bearer token used for dispatch calls back to gateway.
+          // Set this to your gateway auth token when gateway auth is enabled.
+          // dispatchAuthToken: "<gateway-token>"
+        },
+      },
+    },
   },
 }
 ```
@@ -40,6 +47,20 @@ Add/update `~/.openclaw/openclaw.json`:
 ```bash
 openclaw gateway restart
 ```
+
+### Troubleshooting: `Unrecognized key: "sentinel"`
+
+If gateway startup/validation reports:
+
+```text
+Unrecognized key: "sentinel"
+```
+
+your config is using the old root-level shape. Move Sentinel config under:
+
+- `plugins.entries.openclaw-sentinel.config`
+
+Sentinel also logs a runtime warning when that legacy root key is still observable, but it never writes a root-level `sentinel` key.
 
 ### 4) Create your first watcher (`sentinel_control`)
 
