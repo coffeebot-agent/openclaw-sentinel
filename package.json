@@ -72,7 +72,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "dist/index.js"
     ]
   }
 }
