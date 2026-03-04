@@ -108,7 +108,7 @@ Set `"fireOnce": true` to automatically disable a watcher after its first matche
 
 ## Example scenarios
 
-### Sentinel Poker feed monitoring
+### Feed monitoring example
 
 Watch API changes and fire internal webhook events for orchestration.
 
