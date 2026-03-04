@@ -22,6 +22,47 @@ function validateParams(params: unknown): SentinelToolParams {
   return candidate as SentinelToolParams;
 }
 
+function stringifyPayload(payload: unknown): string | undefined {
+  try {
+    const serialized = JSON.stringify(payload, null, 2);
+    if (typeof serialized !== "string" || serialized.length === 0) return undefined;
+    return serialized;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeToolResultText(
+  payload: unknown,
+  fallbackText?: string,
+): ReturnType<typeof jsonResult> {
+  const preferredText = fallbackText?.trim();
+  const safeText =
+    preferredText && preferredText.length > 0 ? preferredText : (stringifyPayload(payload) ?? "ok");
+
+  const result = jsonResult(payload) as ReturnType<typeof jsonResult>;
+  const currentContent = Array.isArray((result as any).content)
+    ? ([...(result as any).content] as any[])
+    : [];
+
+  let sawTextBlock = false;
+  const normalized = currentContent.map((entry) => {
+    if (!entry || typeof entry !== "object" || entry.type !== "text") return entry;
+    sawTextBlock = true;
+    if (typeof entry.text === "string" && entry.text.length > 0) return entry;
+    return { ...entry, text: safeText };
+  });
+
+  if (!sawTextBlock) {
+    normalized.unshift({ type: "text", text: safeText });
+  }
+
+  return {
+    ...result,
+    content: normalized,
+  } as ReturnType<typeof jsonResult>;
+}
+
 type SentinelToolContext = {
   messageChannel?: string;
   requesterSenderId?: string;
@@ -62,23 +103,40 @@ export function registerSentinelControl(
       switch (payload.action) {
         case "create":
         case "add":
-          return jsonResult(
+          return normalizeToolResultText(
             await manager.create(payload.watcher, {
               deliveryTargets: inferDefaultDeliveryTargets(ctx),
             }),
+            "Watcher created",
           );
         case "enable":
-          return jsonResult(await manager.enable(payload.id));
+          await manager.enable(payload.id);
+          return normalizeToolResultText(undefined, `Enabled watcher: ${payload.id}`);
         case "disable":
-          return jsonResult(await manager.disable(payload.id));
+          await manager.disable(payload.id);
+          return normalizeToolResultText(undefined, `Disabled watcher: ${payload.id}`);
         case "remove":
         case "delete":
-          return jsonResult(await manager.remove(payload.id));
+          try {
+            return normalizeToolResultText(
+              await manager.remove(payload.id),
+              `Removed watcher: ${payload.id}`,
+            );
+          } catch (err) {
+            const message = String((err as Error | undefined)?.message ?? err);
+            return normalizeToolResultText(
+              { ok: false, id: payload.id, error: message },
+              `Failed to remove watcher: ${payload.id}`,
+            );
+          }
         case "status":
         case "get":
-          return jsonResult(manager.status(payload.id));
+          return normalizeToolResultText(
+            manager.status(payload.id),
+            `Watcher not found: ${payload.id}`,
+          );
         case "list":
-          return jsonResult(manager.list());
+          return normalizeToolResultText(manager.list(), "[]");
       }
     },
   }));
