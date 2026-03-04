@@ -26,8 +26,31 @@ In config, you **must** set `allowedHosts` — no hosts are allowed by default. 
 `/hooks/sentinel` payload notes:
 
 - Send a JSON object.
-- Use `text` (or `message`) to control the system event text delivered to the loop.
-- If omitted, Sentinel generates a summary from fields like `eventName` and `watcherId`.
+- Sentinel now emits a deterministic wake event with:
+  - an instruction prefix (`SENTINEL_TRIGGER: ...`)
+  - `SENTINEL_ENVELOPE_JSON:` followed by a machine-readable JSON envelope
+- Envelope keys are stable: `watcherId`, `eventName`, `skillId` (if present), `matchedAt`, `payload` (bounded), `dedupeKey`, `correlationId`, `deliveryTargets` (if present), and `source` metadata.
+- Legacy/minimal payloads are still accepted (e.g., `watcher.id`, `event.name`, `timestamp`).
+
+Example structured wake event text:
+
+```text
+SENTINEL_TRIGGER: This system event came from /hooks/sentinel. Evaluate action policy, decide whether to notify configured deliveryTargets, and execute safe follow-up actions.
+SENTINEL_ENVELOPE_JSON:
+{
+  "watcherId": "status-watch",
+  "eventName": "service_degraded",
+  "skillId": "skills.ops",
+  "matchedAt": "2026-03-04T14:12:00.000Z",
+  "payload": { "component": "api", "status": "degraded" },
+  "dedupeKey": "4f3f2bd2ce1a57cd",
+  "correlationId": "4f3f2bd2ce1a57cd",
+  "deliveryTargets": [{ "channel": "telegram", "to": "5613673222" }],
+  "source": { "route": "/hooks/sentinel", "plugin": "openclaw-sentinel" }
+}
+```
+
+Agent interpretation guidance: treat this as a sentinel trigger, evaluate action policy against the envelope context, and only notify/act using the declared targets and safe tool policy.
 
 ## 2) Basic watcher creation (agent tool)
 

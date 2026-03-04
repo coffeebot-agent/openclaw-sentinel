@@ -89,10 +89,22 @@ Use `sentinel_control`:
 1. Sentinel evaluates conditions.
 2. On match, it dispatches to `localDispatchBase + webhookPath`.
 3. It also sends a notification message to each configured `deliveryTargets` destination (defaults to the current chat context when watcher is created from a channel session).
-4. For `/hooks/sentinel`, the plugin route enqueues a system event and requests heartbeat wake.
+4. For `/hooks/sentinel`, the plugin route enqueues a system event (instruction prefix + structured JSON envelope) and requests heartbeat wake.
 5. OpenClaw wakes and processes that event in the configured session (`hookSessionKey`, default `agent:main:main`).
 
 The `/hooks/sentinel` route is auto-registered on plugin startup (idempotent).
+
+### `/hooks/sentinel` wake event format
+
+Sentinel enqueues deterministic system-event text in this shape:
+
+```text
+SENTINEL_TRIGGER: This system event came from /hooks/sentinel. Evaluate action policy, decide whether to notify configured deliveryTargets, and execute safe follow-up actions.
+SENTINEL_ENVELOPE_JSON:
+{ ...stable JSON envelope... }
+```
+
+Envelope keys: `watcherId`, `eventName`, `skillId` (if present), `matchedAt`, `payload` (bounded with truncation marker when clipped), `dedupeKey`, `correlationId`, `deliveryTargets` (if present), `source` (`route`, `plugin`).
 
 ## Why Sentinel
 
