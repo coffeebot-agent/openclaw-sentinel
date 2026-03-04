@@ -22,6 +22,9 @@ In config, you **must** set `allowedHosts` — no hosts are allowed by default. 
           localDispatchBase: "http://127.0.0.1:18789",
           hookSessionPrefix: "agent:main:hooks:sentinel",
           hookRelayDedupeWindowMs: 120000,
+          hookResponseTimeoutMs: 30000,
+          hookResponseFallbackMode: "concise",
+          hookResponseDedupeWindowMs: 120000,
           notificationPayloadMode: "concise",
           // optional legacy alias (supported): hookSessionKey: "agent:main:hooks:sentinel",
         },
@@ -44,6 +47,7 @@ Move the config to `plugins.entries.openclaw-sentinel.config`.
 - Preferred shape is a callback envelope (`type: "sentinel.callback"`).
 - Sentinel prepends instructions for the agent to interpret intent/context, apply policy, act, and notify configured targets.
 - Callback processing is isolated by watcher session by default (`...:watcher:<id>`), with optional explicit grouping via `hookSessionGroup`.
+- Hook callbacks now establish a response-delivery contract: assistant `llm_output` is relayed to original targets; fallback relay is optional on timeout.
 - Legacy `text`/`message` payloads remain supported for backward compatibility.
 
 Example structured wake event text:
@@ -61,6 +65,12 @@ SENTINEL_ENVELOPE_JSON:
   "context": { "component": "api", "status": "degraded", "runbook": "ops-degraded-service" },
   "payload": { "component": "api", "status": "degraded" },
   "deliveryTargets": [{ "channel": "telegram", "to": "5613673222" }],
+  "deliveryContext": {
+    "sessionKey": "agent:main:telegram:direct:5613673222",
+    "messageChannel": "telegram",
+    "requesterSenderId": "5613673222",
+    "currentChat": { "channel": "telegram", "to": "5613673222" }
+  },
   "source": { "route": "/hooks/sentinel", "plugin": "openclaw-sentinel" }
 }
 ```
@@ -153,7 +163,8 @@ You can override with explicit `deliveryTargets` (supports multiple destinations
 ## 4) Notification payload modes (global + per-watcher override)
 
 Sentinel always dispatches the callback envelope on match.
-`notificationPayloadMode` only controls whether/how additional `deliveryTargets` messages are sent.
+`notificationPayloadMode` only controls whether/how additional `deliveryTargets` messages are sent for watcher fire fan-out.
+`/hooks/sentinel` assistant-response relay and timeout fallback are controlled separately by `hookResponse*` settings.
 
 Global options:
 
@@ -200,7 +211,27 @@ Migration note: existing installs remain `concise` by default. Use `none` when y
 
 ---
 
-## 5) One-shot trigger (`fireOnce`)
+## 5) Hook-response delivery contract (`/hooks/sentinel`)
+
+For `/hooks/sentinel`, Sentinel tracks callback-triggered response contracts separately from notification payload mode.
+
+Config knobs:
+
+- `hookResponseTimeoutMs` — wait window for assistant-authored `llm_output` relay (default `30000`).
+- `hookResponseFallbackMode` — timeout behavior: `concise` (default fail-safe relay) or `none`.
+- `hookResponseDedupeWindowMs` — dedupe/idempotency window for repeated callback dedupe keys.
+
+Flow:
+
+1. Callback is enqueued to isolated hook session.
+2. Contract stores original delivery context (`deliveryTargets` and/or `deliveryContext`).
+3. First assistant-authored output is relayed to original chat target(s).
+4. If no assistant output arrives by timeout, optional concise fallback relay is sent.
+5. Duplicate callbacks with same dedupe key inside dedupe window are ignored for extra relay contracts.
+
+---
+
+## 6) One-shot trigger (`fireOnce`)
 
 Use `fireOnce: true` to dispatch once and auto-disable:
 
@@ -233,7 +264,7 @@ Use `fireOnce: true` to dispatch once and auto-disable:
 
 ---
 
-## 6) CI run completion monitor
+## 7) CI run completion monitor
 
 ```json
 {
@@ -269,7 +300,7 @@ Use `fireOnce: true` to dispatch once and auto-disable:
 
 ---
 
-## 7) Runtime control actions
+## 8) Runtime control actions
 
 Check status:
 
@@ -291,7 +322,7 @@ Remove:
 
 ---
 
-## 8) Skill integration pattern
+## 9) Skill integration pattern
 
 Typical skill flow:
 

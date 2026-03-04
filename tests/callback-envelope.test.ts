@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createCallbackEnvelope } from "../src/callbackEnvelope.js";
+import {
+  SENTINEL_ORIGIN_CHANNEL_METADATA,
+  SENTINEL_ORIGIN_SESSION_KEY_METADATA,
+  SENTINEL_ORIGIN_TARGET_METADATA,
+} from "../src/types.js";
 
 const baseWatcher = {
   id: "w1",
@@ -86,6 +91,32 @@ describe("callback envelope", () => {
     });
 
     expect((envelope as any).hookSessionGroup).toBe("risk-desk");
+  });
+
+  it("includes original delivery context when watcher metadata carries chat/session origin", () => {
+    const watcher = {
+      ...baseWatcher,
+      metadata: {
+        [SENTINEL_ORIGIN_SESSION_KEY_METADATA]: "agent:main:telegram:direct:5613673222",
+        [SENTINEL_ORIGIN_CHANNEL_METADATA]: "telegram",
+        [SENTINEL_ORIGIN_TARGET_METADATA]: "5613673222",
+      },
+    } as any;
+
+    const envelope = createCallbackEnvelope({
+      watcher,
+      payload: { service: "auth", status: "degraded" },
+      payloadBody: { service: "auth", status: "degraded" },
+      matchedAt: "2026-03-04T15:00:00.000Z",
+      webhookPath: "/hooks/sentinel",
+    });
+
+    expect((envelope as any).deliveryContext).toMatchObject({
+      sessionKey: "agent:main:telegram:direct:5613673222",
+      messageChannel: "telegram",
+      requesterSenderId: "5613673222",
+      currentChat: { channel: "telegram", to: "5613673222" },
+    });
   });
 
   it("bounds oversized payload bodies", () => {

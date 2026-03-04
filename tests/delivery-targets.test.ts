@@ -65,6 +65,12 @@ describe("delivery targets", () => {
     expect(manager.list()[0]?.deliveryTargets).toEqual([
       { channel: "telegram", to: "5613673222", accountId: "acct-1" },
     ]);
+    expect(manager.list()[0]?.metadata).toMatchObject({
+      "openclaw.sentinel.origin.sessionKey": "agent:main:telegram:direct:5613673222",
+      "openclaw.sentinel.origin.channel": "telegram",
+      "openclaw.sentinel.origin.to": "5613673222",
+      "openclaw.sentinel.origin.accountId": "acct-1",
+    });
   });
 
   it("uses explicit deliveryTargets override with multiple targets", async () => {

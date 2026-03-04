@@ -2,7 +2,13 @@ import { jsonResult } from "openclaw/plugin-sdk";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import type { Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { DeliveryTarget } from "./types.js";
+import {
+  DeliveryTarget,
+  SENTINEL_ORIGIN_ACCOUNT_METADATA,
+  SENTINEL_ORIGIN_CHANNEL_METADATA,
+  SENTINEL_ORIGIN_SESSION_KEY_METADATA,
+  SENTINEL_ORIGIN_TARGET_METADATA,
+} from "./types.js";
 import { WatcherManager } from "./watcherManager.js";
 import { SentinelToolSchema, SentinelToolValidationSchema } from "./toolSchema.js";
 import { TemplateValueSchema } from "./templateValueSchema.js";
@@ -89,6 +95,40 @@ function inferDefaultDeliveryTargets(ctx: SentinelToolContext): DeliveryTarget[]
   return [];
 }
 
+function maybeSetMetadata(
+  metadata: Record<string, string>,
+  key: string,
+  value: string | undefined,
+): void {
+  const trimmed = value?.trim();
+  if (!trimmed) return;
+  if (!metadata[key]) metadata[key] = trimmed;
+}
+
+function addOriginDeliveryMetadata(
+  watcher: Record<string, unknown>,
+  ctx: SentinelToolContext,
+): Record<string, unknown> {
+  const metadataRaw = watcher.metadata;
+  const metadata =
+    metadataRaw && typeof metadataRaw === "object" && !Array.isArray(metadataRaw)
+      ? { ...(metadataRaw as Record<string, string>) }
+      : {};
+
+  const sessionPeer = ctx.sessionKey?.split(":").at(-1)?.trim();
+
+  maybeSetMetadata(metadata, SENTINEL_ORIGIN_SESSION_KEY_METADATA, ctx.sessionKey);
+  maybeSetMetadata(metadata, SENTINEL_ORIGIN_CHANNEL_METADATA, ctx.messageChannel);
+  maybeSetMetadata(metadata, SENTINEL_ORIGIN_TARGET_METADATA, ctx.requesterSenderId ?? sessionPeer);
+  maybeSetMetadata(metadata, SENTINEL_ORIGIN_ACCOUNT_METADATA, ctx.agentAccountId);
+
+  if (Object.keys(metadata).length === 0) return watcher;
+  return {
+    ...watcher,
+    metadata,
+  };
+}
+
 export function registerSentinelControl(
   registerTool: RegisterToolFn,
   manager: WatcherManager,
@@ -102,13 +142,18 @@ export function registerSentinelControl(
       const payload = validateParams(params);
       switch (payload.action) {
         case "create":
-        case "add":
+        case "add": {
+          const watcherWithContext = addOriginDeliveryMetadata(
+            payload.watcher as unknown as Record<string, unknown>,
+            ctx,
+          );
           return normalizeToolResultText(
-            await manager.create(payload.watcher, {
+            await manager.create(watcherWithContext, {
               deliveryTargets: inferDefaultDeliveryTargets(ctx),
             }),
             "Watcher created",
           );
+        }
         case "enable":
           await manager.enable(payload.id);
           return normalizeToolResultText(undefined, `Enabled watcher: ${payload.id}`);

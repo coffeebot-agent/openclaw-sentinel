@@ -3,12 +3,19 @@ import type { IncomingMessage } from "node:http";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { sentinelConfigSchema } from "./configSchema.js";
 import { registerSentinelControl } from "./tool.js";
-import { DEFAULT_SENTINEL_WEBHOOK_PATH, DeliveryTarget, SentinelConfig } from "./types.js";
+import {
+  DEFAULT_SENTINEL_WEBHOOK_PATH,
+  DeliveryTarget,
+  HookResponseFallbackMode,
+  SentinelConfig,
+} from "./types.js";
 import { WatcherManager } from "./watcherManager.js";
 
 const registeredWebhookPathsByRegistrar = new WeakMap<object, Set<string>>();
 const DEFAULT_HOOK_SESSION_PREFIX = "agent:main:hooks:sentinel";
 const DEFAULT_RELAY_DEDUPE_WINDOW_MS = 120_000;
+const DEFAULT_HOOK_RESPONSE_TIMEOUT_MS = 30_000;
+const DEFAULT_HOOK_RESPONSE_FALLBACK_MODE: HookResponseFallbackMode = "concise";
 const MAX_SENTINEL_WEBHOOK_BODY_BYTES = 64 * 1024;
 const MAX_SENTINEL_WEBHOOK_TEXT_CHARS = 8000;
 const MAX_SENTINEL_PAYLOAD_JSON_CHARS = 2500;
@@ -24,6 +31,55 @@ const SUPPORTED_DELIVERY_CHANNELS = new Set([
   "whatsapp",
   "line",
 ]);
+
+type SentinelDeliveryContext = {
+  sessionKey?: string;
+  messageChannel?: string;
+  requesterSenderId?: string;
+  agentAccountId?: string;
+  currentChat?: DeliveryTarget;
+  deliveryTargets?: DeliveryTarget[];
+};
+
+type SentinelEventEnvelope = {
+  watcherId: string | null;
+  eventName: string | null;
+  skillId?: string;
+  matchedAt: string;
+  payload: unknown;
+  dedupeKey: string;
+  correlationId: string;
+  hookSessionGroup?: string;
+  deliveryTargets?: DeliveryTarget[];
+  deliveryContext?: SentinelDeliveryContext;
+  source: {
+    route: string;
+    plugin: string;
+  };
+};
+
+type RelayDeliverySummary = {
+  dedupeKey: string;
+  attempted: number;
+  delivered: number;
+  failed: number;
+  deduped: boolean;
+  pending: boolean;
+  timeoutMs: number;
+  fallbackMode: HookResponseFallbackMode;
+};
+
+type PendingHookResponse = {
+  dedupeKey: string;
+  sessionKey: string;
+  relayTargets: DeliveryTarget[];
+  fallbackMessage: string;
+  createdAt: number;
+  timeoutMs: number;
+  fallbackMode: HookResponseFallbackMode;
+  timer?: ReturnType<typeof setTimeout>;
+  state: "pending" | "completed" | "timed_out";
+};
 
 function trimText(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`;
@@ -105,22 +161,6 @@ function clipPayloadForPrompt(value: unknown): unknown {
   };
 }
 
-type SentinelEventEnvelope = {
-  watcherId: string | null;
-  eventName: string | null;
-  skillId?: string;
-  matchedAt: string;
-  payload: unknown;
-  dedupeKey: string;
-  correlationId: string;
-  hookSessionGroup?: string;
-  deliveryTargets?: DeliveryTarget[];
-  source: {
-    route: string;
-    plugin: string;
-  };
-};
-
 function getNestedString(value: unknown, path: string[]): string | undefined {
   let cursor: unknown = value;
   for (const segment of path) {
@@ -128,6 +168,42 @@ function getNestedString(value: unknown, path: string[]): string | undefined {
     cursor = cursor[segment];
   }
   return asString(cursor);
+}
+
+function extractDeliveryContext(
+  payload: Record<string, unknown>,
+): SentinelDeliveryContext | undefined {
+  const raw = isRecord(payload.deliveryContext) ? payload.deliveryContext : undefined;
+  if (!raw) return undefined;
+
+  const sessionKey =
+    asString(raw.sessionKey) ??
+    asString(raw.sourceSessionKey) ??
+    getNestedString(raw, ["source", "sessionKey"]);
+
+  const messageChannel = asString(raw.messageChannel);
+  const requesterSenderId = asString(raw.requesterSenderId);
+  const agentAccountId = asString(raw.agentAccountId);
+
+  const currentChat = isDeliveryTarget(raw.currentChat)
+    ? raw.currentChat
+    : isDeliveryTarget(raw.deliveryTarget)
+      ? raw.deliveryTarget
+      : undefined;
+
+  const deliveryTargets = Array.isArray(raw.deliveryTargets)
+    ? raw.deliveryTargets.filter(isDeliveryTarget)
+    : undefined;
+
+  const context: SentinelDeliveryContext = {};
+  if (sessionKey) context.sessionKey = sessionKey;
+  if (messageChannel) context.messageChannel = messageChannel;
+  if (requesterSenderId) context.requesterSenderId = requesterSenderId;
+  if (agentAccountId) context.agentAccountId = agentAccountId;
+  if (currentChat) context.currentChat = currentChat;
+  if (deliveryTargets && deliveryTargets.length > 0) context.deliveryTargets = deliveryTargets;
+
+  return Object.keys(context).length > 0 ? context : undefined;
 }
 
 function buildSentinelEventEnvelope(payload: Record<string, unknown>): SentinelEventEnvelope {
@@ -185,6 +261,8 @@ function buildSentinelEventEnvelope(payload: Record<string, unknown>): SentinelE
     asString(payload.sessionGroup) ??
     getNestedString(payload, ["watcher", "sessionGroup"]);
 
+  const deliveryContext = extractDeliveryContext(payload);
+
   const envelope: SentinelEventEnvelope = {
     watcherId: watcherId ?? null,
     eventName: eventName ?? null,
@@ -201,6 +279,7 @@ function buildSentinelEventEnvelope(payload: Record<string, unknown>): SentinelE
   if (skillId) envelope.skillId = skillId;
   if (hookSessionGroup) envelope.hookSessionGroup = hookSessionGroup;
   if (deliveryTargets && deliveryTargets.length > 0) envelope.deliveryTargets = deliveryTargets;
+  if (deliveryContext) envelope.deliveryContext = deliveryContext;
 
   return envelope;
 }
@@ -249,11 +328,35 @@ function inferRelayTargets(
   payload: Record<string, unknown>,
   envelope: SentinelEventEnvelope,
 ): DeliveryTarget[] {
-  if (envelope.deliveryTargets?.length) {
-    return normalizeDeliveryTargets(envelope.deliveryTargets);
+  const inferred: DeliveryTarget[] = [];
+
+  if (envelope.deliveryTargets?.length) inferred.push(...envelope.deliveryTargets);
+
+  if (envelope.deliveryContext?.deliveryTargets?.length) {
+    inferred.push(...envelope.deliveryContext.deliveryTargets);
   }
 
-  const inferred: DeliveryTarget[] = [];
+  if (envelope.deliveryContext?.currentChat) inferred.push(envelope.deliveryContext.currentChat);
+
+  if (envelope.deliveryContext?.messageChannel && envelope.deliveryContext?.requesterSenderId) {
+    if (SUPPORTED_DELIVERY_CHANNELS.has(envelope.deliveryContext.messageChannel)) {
+      inferred.push({
+        channel: envelope.deliveryContext.messageChannel,
+        to: envelope.deliveryContext.requesterSenderId,
+        ...(envelope.deliveryContext.agentAccountId
+          ? { accountId: envelope.deliveryContext.agentAccountId }
+          : {}),
+      });
+    }
+  }
+
+  if (envelope.deliveryContext?.sessionKey) {
+    const target = inferTargetFromSessionKey(
+      envelope.deliveryContext.sessionKey,
+      envelope.deliveryContext.agentAccountId,
+    );
+    if (target) inferred.push(target);
+  }
 
   if (isDeliveryTarget(payload.currentChat)) inferred.push(payload.currentChat);
 
@@ -310,6 +413,30 @@ function buildRelayMessage(envelope: SentinelEventEnvelope): string {
 
   const text = lines.join("\n").trim();
   return text.length > 0 ? text : "Sentinel callback received.";
+}
+
+function normalizeAssistantRelayText(assistantTexts: string[]): string | undefined {
+  if (!Array.isArray(assistantTexts) || assistantTexts.length === 0) return undefined;
+  const parts = assistantTexts.map((value) => value.trim()).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  return trimText(parts.join("\n\n"), MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
+}
+
+function resolveHookResponseDedupeWindowMs(config: SentinelConfig): number {
+  const candidate =
+    config.hookResponseDedupeWindowMs ??
+    config.hookRelayDedupeWindowMs ??
+    DEFAULT_RELAY_DEDUPE_WINDOW_MS;
+  return Math.max(0, candidate);
+}
+
+function resolveHookResponseTimeoutMs(config: SentinelConfig): number {
+  const candidate = config.hookResponseTimeoutMs ?? DEFAULT_HOOK_RESPONSE_TIMEOUT_MS;
+  return Math.max(0, candidate);
+}
+
+function resolveHookResponseFallbackMode(config: SentinelConfig): HookResponseFallbackMode {
+  return config.hookResponseFallbackMode === "none" ? "none" : DEFAULT_HOOK_RESPONSE_FALLBACK_MODE;
 }
 
 function buildIsolatedHookSessionKey(
@@ -419,6 +546,201 @@ async function notifyDeliveryTarget(
   }
 }
 
+async function deliverMessageToTargets(
+  api: OpenClawPluginApi,
+  targets: DeliveryTarget[],
+  message: string,
+): Promise<{ delivered: number; failed: number }> {
+  if (targets.length === 0) return { delivered: 0, failed: 0 };
+
+  const results = await Promise.all(
+    targets.map(async (target) => {
+      try {
+        await notifyDeliveryTarget(api, target, message);
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+  );
+
+  const delivered = results.filter(Boolean).length;
+  return {
+    delivered,
+    failed: results.length - delivered,
+  };
+}
+
+class HookResponseRelayManager {
+  private recentByDedupe = new Map<string, number>();
+  private pendingByDedupe = new Map<string, PendingHookResponse>();
+  private pendingQueueBySession = new Map<string, string[]>();
+
+  constructor(
+    private readonly config: SentinelConfig,
+    private readonly api: OpenClawPluginApi,
+  ) {}
+
+  register(args: {
+    dedupeKey: string;
+    sessionKey: string;
+    relayTargets: DeliveryTarget[];
+    fallbackMessage: string;
+  }): RelayDeliverySummary {
+    const dedupeWindowMs = resolveHookResponseDedupeWindowMs(this.config);
+    const now = Date.now();
+
+    if (dedupeWindowMs > 0) {
+      for (const [key, ts] of this.recentByDedupe.entries()) {
+        if (now - ts > dedupeWindowMs) {
+          this.recentByDedupe.delete(key);
+          this.pendingByDedupe.delete(key);
+        }
+      }
+    }
+
+    const existingTs = this.recentByDedupe.get(args.dedupeKey);
+    if (
+      dedupeWindowMs > 0 &&
+      typeof existingTs === "number" &&
+      now - existingTs <= dedupeWindowMs
+    ) {
+      return {
+        dedupeKey: args.dedupeKey,
+        attempted: args.relayTargets.length,
+        delivered: 0,
+        failed: 0,
+        deduped: true,
+        pending: false,
+        timeoutMs: resolveHookResponseTimeoutMs(this.config),
+        fallbackMode: resolveHookResponseFallbackMode(this.config),
+      };
+    }
+
+    this.recentByDedupe.set(args.dedupeKey, now);
+
+    const timeoutMs = resolveHookResponseTimeoutMs(this.config);
+    const fallbackMode = resolveHookResponseFallbackMode(this.config);
+
+    if (args.relayTargets.length === 0) {
+      return {
+        dedupeKey: args.dedupeKey,
+        attempted: 0,
+        delivered: 0,
+        failed: 0,
+        deduped: false,
+        pending: false,
+        timeoutMs,
+        fallbackMode,
+      };
+    }
+
+    const pending: PendingHookResponse = {
+      dedupeKey: args.dedupeKey,
+      sessionKey: args.sessionKey,
+      relayTargets: args.relayTargets,
+      fallbackMessage: args.fallbackMessage,
+      createdAt: now,
+      timeoutMs,
+      fallbackMode,
+      state: "pending",
+    };
+
+    this.pendingByDedupe.set(args.dedupeKey, pending);
+    const queue = this.pendingQueueBySession.get(args.sessionKey) ?? [];
+    queue.push(args.dedupeKey);
+    this.pendingQueueBySession.set(args.sessionKey, queue);
+
+    if (timeoutMs === 0) {
+      void this.handleTimeout(args.dedupeKey);
+    } else {
+      pending.timer = setTimeout(() => {
+        void this.handleTimeout(args.dedupeKey);
+      }, timeoutMs);
+    }
+
+    return {
+      dedupeKey: args.dedupeKey,
+      attempted: args.relayTargets.length,
+      delivered: 0,
+      failed: 0,
+      deduped: false,
+      pending: true,
+      timeoutMs,
+      fallbackMode,
+    };
+  }
+
+  async handleLlmOutput(sessionKey: string | undefined, assistantTexts: string[]): Promise<void> {
+    if (!sessionKey) return;
+
+    const assistantMessage = normalizeAssistantRelayText(assistantTexts);
+    if (!assistantMessage) return;
+
+    const dedupeKey = this.popNextPendingDedupe(sessionKey);
+    if (!dedupeKey) return;
+
+    const pending = this.pendingByDedupe.get(dedupeKey);
+    if (!pending || pending.state !== "pending") return;
+
+    await this.completeWithMessage(pending, assistantMessage, "assistant");
+  }
+
+  private popNextPendingDedupe(sessionKey: string): string | undefined {
+    const queue = this.pendingQueueBySession.get(sessionKey);
+    if (!queue || queue.length === 0) return undefined;
+
+    while (queue.length > 0) {
+      const next = queue.shift();
+      if (!next) continue;
+      const pending = this.pendingByDedupe.get(next);
+      if (pending && pending.state === "pending") {
+        if (queue.length === 0) this.pendingQueueBySession.delete(sessionKey);
+        else this.pendingQueueBySession.set(sessionKey, queue);
+        return next;
+      }
+    }
+
+    this.pendingQueueBySession.delete(sessionKey);
+    return undefined;
+  }
+
+  private async handleTimeout(dedupeKey: string): Promise<void> {
+    const pending = this.pendingByDedupe.get(dedupeKey);
+    if (!pending || pending.state !== "pending") return;
+
+    if (pending.fallbackMode === "none") {
+      this.markClosed(pending, "timed_out");
+      return;
+    }
+
+    await this.completeWithMessage(pending, pending.fallbackMessage, "timeout");
+  }
+
+  private async completeWithMessage(
+    pending: PendingHookResponse,
+    message: string,
+    source: "assistant" | "timeout",
+  ): Promise<void> {
+    const delivery = await deliverMessageToTargets(this.api, pending.relayTargets, message);
+
+    this.markClosed(pending, source === "assistant" ? "completed" : "timed_out");
+
+    this.api.logger?.info?.(
+      `[openclaw-sentinel] ${source === "assistant" ? "Relayed assistant response" : "Sent timeout fallback"} for dedupe=${pending.dedupeKey} delivered=${delivery.delivered} failed=${delivery.failed}`,
+    );
+  }
+
+  private markClosed(pending: PendingHookResponse, state: "completed" | "timed_out"): void {
+    pending.state = state;
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = undefined;
+    }
+    this.pendingByDedupe.set(pending.dedupeKey, pending);
+  }
+}
+
 export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
   const config: SentinelConfig = {
     allowedHosts: [],
@@ -426,6 +748,9 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
     dispatchAuthToken: process.env.SENTINEL_DISPATCH_TOKEN,
     hookSessionPrefix: DEFAULT_HOOK_SESSION_PREFIX,
     hookRelayDedupeWindowMs: DEFAULT_RELAY_DEDUPE_WINDOW_MS,
+    hookResponseTimeoutMs: DEFAULT_HOOK_RESPONSE_TIMEOUT_MS,
+    hookResponseFallbackMode: DEFAULT_HOOK_RESPONSE_FALLBACK_MODE,
+    hookResponseDedupeWindowMs: DEFAULT_RELAY_DEDUPE_WINDOW_MS,
     notificationPayloadMode: "concise",
     limits: {
       maxWatchersTotal: 200,
@@ -434,24 +759,6 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
       maxIntervalMsFloor: 1000,
     },
     ...overrides,
-  };
-
-  const recentRelayByDedupe = new Map<string, number>();
-
-  const shouldRelayForDedupe = (dedupeKey: string): boolean => {
-    const windowMs = Math.max(0, config.hookRelayDedupeWindowMs ?? DEFAULT_RELAY_DEDUPE_WINDOW_MS);
-    if (windowMs === 0) return true;
-
-    const now = Date.now();
-    for (const [key, ts] of recentRelayByDedupe.entries()) {
-      if (now - ts > windowMs) recentRelayByDedupe.delete(key);
-    }
-
-    const prev = recentRelayByDedupe.get(dedupeKey);
-    if (typeof prev === "number" && now - prev <= windowMs) return false;
-
-    recentRelayByDedupe.set(dedupeKey, now);
-    return true;
   };
 
   const manager = new WatcherManager(config, {
@@ -474,6 +781,14 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
     register(api: OpenClawPluginApi) {
       const runtimeConfig = resolveSentinelPluginConfig(api);
       if (Object.keys(runtimeConfig).length > 0) Object.assign(config, runtimeConfig);
+
+      const hookResponseRelayManager = new HookResponseRelayManager(config, api);
+
+      if (typeof api.on === "function") {
+        api.on("llm_output", (event, ctx) => {
+          void hookResponseRelayManager.handleLlmOutput(ctx?.sessionKey, event.assistantTexts);
+        });
+      }
 
       manager.setNotifier({
         async notify(target, message) {
@@ -526,31 +841,12 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
               });
 
               const relayTargets = inferRelayTargets(payload, envelope);
-              const relayMessage = buildRelayMessage(envelope);
-              const relay = {
+              const relay = hookResponseRelayManager.register({
                 dedupeKey: envelope.dedupeKey,
-                attempted: relayTargets.length,
-                delivered: 0,
-                failed: 0,
-                deduped: false,
-              };
-
-              if (relayTargets.length > 0) {
-                if (!shouldRelayForDedupe(envelope.dedupeKey)) {
-                  relay.deduped = true;
-                } else {
-                  await Promise.all(
-                    relayTargets.map(async (target) => {
-                      try {
-                        await notifyDeliveryTarget(api, target, relayMessage);
-                        relay.delivered += 1;
-                      } catch {
-                        relay.failed += 1;
-                      }
-                    }),
-                  );
-                }
-              }
+                sessionKey,
+                relayTargets,
+                fallbackMessage: buildRelayMessage(envelope),
+              });
 
               res.writeHead(200, { "content-type": "application/json" });
               res.end(

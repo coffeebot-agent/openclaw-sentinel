@@ -39,6 +39,17 @@ Add/update `~/.openclaw/openclaw.json`:
           // Optional: suppress duplicate relays by dedupe key within this time window.
           hookRelayDedupeWindowMs: 120000,
 
+          // Optional: guarantee hook-response delivery contract for /hooks/sentinel callbacks.
+          // Wait this long for assistant-authored output before fallback behavior applies.
+          hookResponseTimeoutMs: 30000,
+
+          // Optional: timeout fallback relay mode for /hooks/sentinel response contracts.
+          // "none" = no fallback message, "concise" = send a fail-safe relay line.
+          hookResponseFallbackMode: "concise",
+
+          // Optional: dedupe repeated callback response contracts by dedupe key.
+          hookResponseDedupeWindowMs: 120000,
+
           // Optional: payload style for non-/hooks/sentinel deliveryTargets notifications.
           // "none" suppresses delivery-target message fan-out (callback still fires).
           // "concise" (default) sends human-friendly relay text only.
@@ -134,12 +145,13 @@ Use `sentinel_control`:
 
 1. Sentinel evaluates conditions.
 2. On match, it dispatches a generic callback envelope (`type: "sentinel.callback"`) to `localDispatchBase + webhookPath`.
-3. The envelope includes stable keys (`intent`, `context`, `watcher`, `trigger`, bounded `payload`, `deliveryTargets`, `source`) so downstream agent behavior is workflow-agnostic.
-4. For `/hooks/sentinel`, delivery to user chat is relayed from the hook route using `deliveryTargets` (or inferred chat context when available) with a concise alert message.
-5. The `/hooks/sentinel` route enqueues an instruction-prefixed system event plus structured JSON envelope and requests heartbeat wake.
+3. The envelope includes stable keys (`intent`, `context`, `watcher`, `trigger`, bounded `payload`, `deliveryTargets`, `deliveryContext`, `source`) so downstream agent behavior is workflow-agnostic.
+4. For `/hooks/sentinel`, Sentinel enqueues an instruction-prefixed system event plus structured JSON envelope and requests heartbeat wake.
+5. The hook route creates a **response-delivery contract** keyed by callback dedupe key, preserving original chat/session context (`deliveryContext`) and intended relay targets.
 6. OpenClaw processes each callback in an isolated hook session: per-watcher by default, or grouped when `hookSessionGroup` / `fire.sessionGroup` is set. Shared global hook-session mode is intentionally not supported.
+7. When hook-session LLM output arrives, Sentinel relays assistant-authored text to the original chat context. If no assistant output arrives before `hookResponseTimeoutMs`, optional fallback relay behavior is applied (`hookResponseFallbackMode`).
 
-The `/hooks/sentinel` route is auto-registered on plugin startup (idempotent). Relay notifications are dedupe-aware by callback dedupe key.
+The `/hooks/sentinel` route is auto-registered on plugin startup (idempotent). Response contracts are dedupe-aware by callback dedupe key (`hookResponseDedupeWindowMs`).
 
 Sample emitted envelope:
 
@@ -158,6 +170,12 @@ Sample emitted envelope:
   "context": { "asset": "ETH", "priceUsd": 5001, "workflow": "alerts" },
   "payload": { "ethereum": { "usd": 5001 } },
   "deliveryTargets": [{ "channel": "telegram", "to": "5613673222" }],
+  "deliveryContext": {
+    "sessionKey": "agent:main:telegram:direct:5613673222",
+    "messageChannel": "telegram",
+    "requesterSenderId": "5613673222",
+    "currentChat": { "channel": "telegram", "to": "5613673222" }
+  },
   "source": { "plugin": "openclaw-sentinel", "route": "/hooks/sentinel" }
 }
 ```
@@ -226,7 +244,8 @@ It **does not** execute user-authored code from watcher definitions.
 ## Notification payload delivery modes
 
 Sentinel always dispatches the callback envelope to `localDispatchBase + webhookPath` on match.
-`notificationPayloadMode` only controls **additional fan-out messages** to `deliveryTargets`.
+`notificationPayloadMode` only controls **additional fan-out messages** to `deliveryTargets` for watcher dispatches (for example `/hooks/agent`).
+It does **not** control `/hooks/sentinel` hook-response contracts or assistant-output relay behavior.
 
 Global mode options:
 
@@ -307,6 +326,38 @@ Precedence: **watcher override > global setting**.
 
 - Existing installs keep default behavior (`concise`) unless you set `notificationPayloadMode` explicitly.
 - If you want callback-only operation (wake LLM loop via `/hooks/sentinel` but no delivery-target chat message), set global or per-watcher mode to `none`.
+
+## Hook-response delivery contract (`/hooks/sentinel`)
+
+`/hooks/sentinel` now enforces a dedicated trigger → LLM → user-visible relay contract:
+
+1. Callback is enqueued to isolated hook session.
+2. Contract captures original delivery context (`deliveryContext` + resolved `deliveryTargets`).
+3. First assistant-authored `llm_output` for that pending callback is relayed to target chat.
+4. If no assistant output arrives in time (`hookResponseTimeoutMs`), fallback is configurable:
+   - `hookResponseFallbackMode: "concise"` (default) sends a short fail-safe relay.
+   - `hookResponseFallbackMode: "none"` suppresses fallback.
+5. Repeated callbacks with same dedupe key are idempotent within `hookResponseDedupeWindowMs`.
+
+Example config:
+
+```json5
+{
+  plugins: {
+    entries: {
+      "openclaw-sentinel": {
+        enabled: true,
+        config: {
+          allowedHosts: ["api.github.com"],
+          hookResponseTimeoutMs: 30000,
+          hookResponseFallbackMode: "concise",
+          hookResponseDedupeWindowMs: 120000,
+        },
+      },
+    },
+  },
+}
+```
 
 ## Runtime controls
 

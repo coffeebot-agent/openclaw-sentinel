@@ -24,6 +24,13 @@ export type PriorityLevel = "low" | "normal" | "high" | "critical";
 export type NotificationPayloadMode = "none" | "concise" | "debug";
 export type NotificationPayloadModeOverride = "inherit" | NotificationPayloadMode;
 
+export type HookResponseFallbackMode = "none" | "concise";
+
+export const SENTINEL_ORIGIN_SESSION_KEY_METADATA = "openclaw.sentinel.origin.sessionKey";
+export const SENTINEL_ORIGIN_CHANNEL_METADATA = "openclaw.sentinel.origin.channel";
+export const SENTINEL_ORIGIN_TARGET_METADATA = "openclaw.sentinel.origin.to";
+export const SENTINEL_ORIGIN_ACCOUNT_METADATA = "openclaw.sentinel.origin.accountId";
+
 export interface FireConfig {
   webhookPath?: string;
   eventName: string;
@@ -111,6 +118,9 @@ export interface SentinelConfig {
   hookSessionPrefix?: string;
   hookSessionGroup?: string;
   hookRelayDedupeWindowMs?: number;
+  hookResponseTimeoutMs?: number;
+  hookResponseFallbackMode?: HookResponseFallbackMode;
+  hookResponseDedupeWindowMs?: number;
   stateFilePath?: string;
   notificationPayloadMode?: NotificationPayloadMode;
   limits: SentinelLimits;

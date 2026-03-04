@@ -6,7 +6,9 @@
     "properties": {
       "allowedHosts": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Hostnames the watchers are permitted to connect to. Must be explicitly configured — no hosts are allowed by default.",
         "default": []
       },
@@ -74,6 +76,24 @@
             "default": 1000
           }
         }
+      },
+      "hookResponseTimeoutMs": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Milliseconds to wait for an assistant-authored hook response before optional fallback relay",
+        "default": 30000
+      },
+      "hookResponseFallbackMode": {
+        "type": "string",
+        "enum": ["none", "concise"],
+        "description": "Fallback behavior when no assistant response arrives before hookResponseTimeoutMs: none (silent timeout) or concise fail-safe relay",
+        "default": "concise"
+      },
+      "hookResponseDedupeWindowMs": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Deduplicate hook response-delivery contracts by dedupe key within this window (milliseconds)",
+        "default": 120000
       }
     }
   },
@@ -140,6 +160,21 @@
     "limits.maxIntervalMsFloor": {
       "label": "Min Poll Interval (ms)",
       "help": "Minimum allowed polling interval in milliseconds",
+      "advanced": true
+    },
+    "hookResponseTimeoutMs": {
+      "label": "Hook Response Timeout (ms)",
+      "help": "How long to wait for assistant-authored hook output before optional fallback relay",
+      "advanced": true
+    },
+    "hookResponseFallbackMode": {
+      "label": "Hook Response Fallback Mode",
+      "help": "If timeout occurs, choose none (silent) or concise fail-safe relay",
+      "advanced": true
+    },
+    "hookResponseDedupeWindowMs": {
+      "label": "Hook Response Dedupe Window (ms)",
+      "help": "Deduplicate hook-response delivery contracts by dedupe key within this window",
       "advanced": true
     }
   },

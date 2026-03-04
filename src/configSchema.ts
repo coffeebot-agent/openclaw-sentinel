@@ -18,6 +18,8 @@ const NotificationPayloadModeSchema = Type.Union([
   Type.Literal("debug"),
 ]);
 
+const HookResponseFallbackModeSchema = Type.Union([Type.Literal("none"), Type.Literal("concise")]);
+
 const ConfigSchema = Type.Object(
   {
     allowedHosts: Type.Array(Type.String()),
@@ -27,6 +29,9 @@ const ConfigSchema = Type.Object(
     hookSessionPrefix: Type.Optional(Type.String({ minLength: 1 })),
     hookSessionGroup: Type.Optional(Type.String({ minLength: 1 })),
     hookRelayDedupeWindowMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    hookResponseTimeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    hookResponseFallbackMode: Type.Optional(HookResponseFallbackModeSchema),
+    hookResponseDedupeWindowMs: Type.Optional(Type.Integer({ minimum: 0 })),
     stateFilePath: Type.Optional(Type.String()),
     notificationPayloadMode: Type.Optional(NotificationPayloadModeSchema),
     limits: Type.Optional(LimitsSchema),
@@ -54,6 +59,13 @@ function withDefaults(value: Record<string, unknown>): Record<string, unknown> {
       typeof value.hookSessionGroup === "string" ? value.hookSessionGroup : undefined,
     hookRelayDedupeWindowMs:
       typeof value.hookRelayDedupeWindowMs === "number" ? value.hookRelayDedupeWindowMs : 120000,
+    hookResponseTimeoutMs:
+      typeof value.hookResponseTimeoutMs === "number" ? value.hookResponseTimeoutMs : 30000,
+    hookResponseFallbackMode: value.hookResponseFallbackMode === "none" ? "none" : "concise",
+    hookResponseDedupeWindowMs:
+      typeof value.hookResponseDedupeWindowMs === "number"
+        ? value.hookResponseDedupeWindowMs
+        : 120000,
     stateFilePath: typeof value.stateFilePath === "string" ? value.stateFilePath : undefined,
     notificationPayloadMode:
       value.notificationPayloadMode === "none"
@@ -164,6 +176,27 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
           "Suppress duplicate relay messages for the same dedupe key within this window (milliseconds)",
         default: 120000,
       },
+      hookResponseTimeoutMs: {
+        type: "number",
+        minimum: 0,
+        description:
+          "Milliseconds to wait for an assistant-authored hook response before optional fallback relay",
+        default: 30000,
+      },
+      hookResponseFallbackMode: {
+        type: "string",
+        enum: ["none", "concise"],
+        description:
+          "Fallback behavior when no assistant response arrives before hookResponseTimeoutMs: none (silent timeout) or concise fail-safe relay",
+        default: "concise",
+      },
+      hookResponseDedupeWindowMs: {
+        type: "number",
+        minimum: 0,
+        description:
+          "Deduplicate hook response-delivery contracts by dedupe key within this window (milliseconds)",
+        default: 120000,
+      },
       stateFilePath: {
         type: "string",
         description: "Custom path for the sentinel state persistence file",
@@ -237,6 +270,21 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
     hookRelayDedupeWindowMs: {
       label: "Hook Relay Dedupe Window (ms)",
       help: "Suppress duplicate relay messages with the same dedupe key for this many milliseconds",
+      advanced: true,
+    },
+    hookResponseTimeoutMs: {
+      label: "Hook Response Timeout (ms)",
+      help: "How long to wait for assistant-authored hook output before optional fallback relay",
+      advanced: true,
+    },
+    hookResponseFallbackMode: {
+      label: "Hook Response Fallback Mode",
+      help: "If timeout occurs, choose none (silent) or concise fail-safe relay",
+      advanced: true,
+    },
+    hookResponseDedupeWindowMs: {
+      label: "Hook Response Dedupe Window (ms)",
+      help: "Deduplicate hook-response delivery contracts by dedupe key within this window",
       advanced: true,
     },
     stateFilePath: {

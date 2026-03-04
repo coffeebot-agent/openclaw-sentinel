@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { PriorityLevel, WatcherDefinition } from "./types.js";
+import {
+  PriorityLevel,
+  SENTINEL_ORIGIN_ACCOUNT_METADATA,
+  SENTINEL_ORIGIN_CHANNEL_METADATA,
+  SENTINEL_ORIGIN_SESSION_KEY_METADATA,
+  SENTINEL_ORIGIN_TARGET_METADATA,
+  WatcherDefinition,
+} from "./types.js";
 import { renderTemplate } from "./template.js";
 
 const MAX_PAYLOAD_JSON_CHARS = 4000;
@@ -33,6 +40,34 @@ function truncatePayload(payload: unknown): unknown {
     maxChars: MAX_PAYLOAD_JSON_CHARS,
     preview: serialized.slice(0, MAX_PAYLOAD_JSON_CHARS),
   };
+}
+
+function buildDeliveryContextFromMetadata(
+  watcher: WatcherDefinition,
+): Record<string, unknown> | undefined {
+  const metadata = watcher.metadata;
+  if (!metadata) return undefined;
+
+  const sessionKey = metadata[SENTINEL_ORIGIN_SESSION_KEY_METADATA]?.trim();
+  const channel = metadata[SENTINEL_ORIGIN_CHANNEL_METADATA]?.trim();
+  const to = metadata[SENTINEL_ORIGIN_TARGET_METADATA]?.trim();
+  const accountId = metadata[SENTINEL_ORIGIN_ACCOUNT_METADATA]?.trim();
+
+  const context: Record<string, unknown> = {};
+  if (sessionKey) context.sessionKey = sessionKey;
+  if (channel) context.messageChannel = channel;
+  if (to) context.requesterSenderId = to;
+  if (accountId) context.agentAccountId = accountId;
+
+  if (channel && to) {
+    context.currentChat = {
+      channel,
+      to,
+      ...(accountId ? { accountId } : {}),
+    };
+  }
+
+  return Object.keys(context).length > 0 ? context : undefined;
 }
 
 function getPath(obj: unknown, path: string): unknown {
@@ -93,6 +128,8 @@ export function createCallbackEnvelope(args: {
     `${watcher.id}|${watcher.fire.eventName}|${matchedAt}`;
   const dedupeKey = createHash("sha256").update(dedupeSeed).digest("hex");
 
+  const deliveryContext = buildDeliveryContextFromMetadata(watcher);
+
   return {
     type: "sentinel.callback",
     version: "1",
@@ -110,6 +147,7 @@ export function createCallbackEnvelope(args: {
       ...(deadline ? { deadline } : {}),
     },
     ...(watcher.fire.sessionGroup ? { hookSessionGroup: watcher.fire.sessionGroup } : {}),
+    ...(deliveryContext ? { deliveryContext } : {}),
     context: renderedContext ?? summarizePayload(payload),
     payload: truncatePayload(payload),
     deliveryTargets: watcher.deliveryTargets ?? [],
