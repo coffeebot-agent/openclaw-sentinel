@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { sentinelConfigSchema } from "./configSchema.js";
@@ -8,14 +9,10 @@ import { WatcherManager } from "./watcherManager.js";
 const registeredWebhookPathsByRegistrar = new WeakMap<object, Set<string>>();
 const DEFAULT_HOOK_SESSION_KEY = "agent:main:main";
 const MAX_SENTINEL_WEBHOOK_BODY_BYTES = 64 * 1024;
-const MAX_SENTINEL_WEBHOOK_TEXT_CHARS = 2000;
-
-function normalizePath(path: string): string {
-  const trimmed = path.trim();
-  if (!trimmed) return DEFAULT_SENTINEL_WEBHOOK_PATH;
-  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-  return withSlash.length > 1 && withSlash.endsWith("/") ? withSlash.slice(0, -1) : withSlash;
-}
+const MAX_SENTINEL_WEBHOOK_TEXT_CHARS = 8000;
+const MAX_SENTINEL_PAYLOAD_JSON_CHARS = 2500;
+const SENTINEL_EVENT_INSTRUCTION_PREFIX =
+  "SENTINEL_TRIGGER: This system event came from /hooks/sentinel. Evaluate action policy, decide whether to notify configured deliveryTargets, and execute safe follow-up actions.";
 
 function trimText(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`;
@@ -27,23 +24,123 @@ function asString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function asIsoString(value: unknown): string | undefined {
+  const text = asString(value);
+  if (!text) return undefined;
+  const timestamp = Date.parse(text);
+  return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function buildSentinelSystemEvent(payload: Record<string, unknown>): string {
-  const text = asString(payload.text) ?? asString(payload.message);
-  if (text) return trimText(text, MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
+function isDeliveryTarget(value: unknown): value is DeliveryTarget {
+  return (
+    isRecord(value) &&
+    typeof value.channel === "string" &&
+    typeof value.to === "string" &&
+    (value.accountId === undefined || typeof value.accountId === "string")
+  );
+}
 
-  const watcherId = asString(payload.watcherId);
+function normalizePath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return DEFAULT_SENTINEL_WEBHOOK_PATH;
+  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withSlash.length > 1 && withSlash.endsWith("/") ? withSlash.slice(0, -1) : withSlash;
+}
+
+function clipPayloadForPrompt(value: unknown): unknown {
+  const serialized = JSON.stringify(value);
+  if (!serialized) return value;
+  if (serialized.length <= MAX_SENTINEL_PAYLOAD_JSON_CHARS) return value;
+
+  const clipped = serialized.slice(0, MAX_SENTINEL_PAYLOAD_JSON_CHARS);
+  const overflow = serialized.length - clipped.length;
+  return {
+    __truncated: true,
+    truncatedChars: overflow,
+    maxChars: MAX_SENTINEL_PAYLOAD_JSON_CHARS,
+    preview: `${clipped}…`,
+  };
+}
+
+type SentinelEventEnvelope = {
+  watcherId: string | null;
+  eventName: string | null;
+  skillId?: string;
+  matchedAt: string;
+  payload: unknown;
+  dedupeKey: string;
+  correlationId: string;
+  deliveryTargets?: DeliveryTarget[];
+  source: {
+    route: string;
+    plugin: string;
+  };
+};
+
+function buildSentinelEventEnvelope(payload: Record<string, unknown>): SentinelEventEnvelope {
+  const watcherId =
+    asString(payload.watcherId) ??
+    (isRecord(payload.watcher) ? asString(payload.watcher.id) : undefined);
   const eventName =
     asString(payload.eventName) ??
     (isRecord(payload.event) ? asString(payload.event.name) : undefined);
+  const skillId =
+    asString(payload.skillId) ??
+    (isRecord(payload.watcher) ? asString(payload.watcher.skillId) : undefined) ??
+    undefined;
+  const matchedAt =
+    asIsoString(payload.matchedAt) ?? asIsoString(payload.timestamp) ?? new Date().toISOString();
 
-  const labels: string[] = ["Sentinel webhook received"];
-  if (eventName) labels.push(`event=${eventName}`);
-  if (watcherId) labels.push(`watcher=${watcherId}`);
-  return trimText(labels.join(" "), MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
+  const rawPayload =
+    payload.payload ??
+    (isRecord(payload.event) ? (payload.event.payload ?? payload.event.data) : undefined) ??
+    payload;
+  const boundedPayload = clipPayloadForPrompt(rawPayload);
+
+  const dedupeSeed = JSON.stringify({
+    watcherId: watcherId ?? null,
+    eventName: eventName ?? null,
+    matchedAt,
+  });
+  const generatedDedupe = createHash("sha256").update(dedupeSeed).digest("hex").slice(0, 16);
+  const dedupeKey =
+    asString(payload.dedupeKey) ??
+    asString(payload.correlationId) ??
+    asString(payload.correlationID) ??
+    generatedDedupe;
+
+  const deliveryTargets = Array.isArray(payload.deliveryTargets)
+    ? payload.deliveryTargets.filter(isDeliveryTarget)
+    : undefined;
+
+  const envelope: SentinelEventEnvelope = {
+    watcherId: watcherId ?? null,
+    eventName: eventName ?? null,
+    matchedAt,
+    payload: boundedPayload,
+    dedupeKey,
+    correlationId: dedupeKey,
+    source: {
+      route: DEFAULT_SENTINEL_WEBHOOK_PATH,
+      plugin: "openclaw-sentinel",
+    },
+  };
+
+  if (skillId) envelope.skillId = skillId;
+  if (deliveryTargets && deliveryTargets.length > 0) envelope.deliveryTargets = deliveryTargets;
+
+  return envelope;
+}
+
+function buildSentinelSystemEvent(payload: Record<string, unknown>): string {
+  const envelope = buildSentinelEventEnvelope(payload);
+  const jsonEnvelope = JSON.stringify(envelope, null, 2);
+  const text = `${SENTINEL_EVENT_INSTRUCTION_PREFIX}\nSENTINEL_ENVELOPE_JSON:\n${jsonEnvelope}`;
+  return trimText(text, MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
 }
 
 async function readSentinelWebhookPayload(req: IncomingMessage): Promise<Record<string, unknown>> {
