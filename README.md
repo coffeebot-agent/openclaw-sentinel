@@ -167,7 +167,3 @@ npm run build
 ## License
 
 MIT
-
-CI trigger probe: 2026-03-03T22:51:37Z
-
-Push trigger probe 2026-03-03T22:56:44Z
