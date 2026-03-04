@@ -111,7 +111,6 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
       },
       localDispatchBase: {
         type: "string",
-        format: "uri",
         description: "Base URL for internal webhook dispatch",
         default: "http://127.0.0.1:18789",
       },
