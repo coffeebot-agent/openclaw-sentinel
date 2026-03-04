@@ -1,5 +1,11 @@
 # @coffeexdev/openclaw-sentinel
 
+## 0.1.6
+
+### Patch Changes
+
+- d1add1d: Refactor sentinel tool parameter validation to use TypeBox-only runtime checks (`Value.Check`/`Value.Errors`) and remove zod-based parameter validation drift risk.
+
 ## 0.1.5
 
 ### Patch Changes
