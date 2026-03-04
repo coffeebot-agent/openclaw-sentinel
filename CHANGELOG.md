@@ -1,5 +1,11 @@
 # @coffeexdev/openclaw-sentinel
 
+## 0.1.7
+
+### Patch Changes
+
+- 7d772ce: Migrate watcher definition validation from zod to TypeBox runtime checks (`Value.Check`/`Value.Errors`) for full schema/validation consistency.
+
 ## 0.1.6
 
 ### Patch Changes
