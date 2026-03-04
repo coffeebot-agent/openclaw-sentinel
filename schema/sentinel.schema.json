@@ -86,7 +86,8 @@
           "type": "string",
           "enum": ["inherit", "none", "concise", "debug"],
           "description": "Per-watcher notification payload mode override for deliveryTargets"
-        }
+        },
+        "sessionGroup": { "type": "string", "minLength": 1 }
       }
     },
     "retry": {

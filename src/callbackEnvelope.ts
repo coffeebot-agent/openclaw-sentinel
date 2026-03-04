@@ -109,6 +109,7 @@ export function createCallbackEnvelope(args: {
       priority,
       ...(deadline ? { deadline } : {}),
     },
+    ...(watcher.fire.sessionGroup ? { hookSessionGroup: watcher.fire.sessionGroup } : {}),
     context: renderedContext ?? summarizePayload(payload),
     payload: truncatePayload(payload),
     deliveryTargets: watcher.deliveryTargets ?? [],

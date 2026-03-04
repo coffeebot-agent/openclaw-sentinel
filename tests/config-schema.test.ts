@@ -8,6 +8,8 @@ describe("sentinel config schema", () => {
     expect(parsed?.data).toMatchObject({
       allowedHosts: [],
       localDispatchBase: "http://127.0.0.1:18789",
+      hookSessionPrefix: "agent:main:hooks:sentinel",
+      hookRelayDedupeWindowMs: 120000,
       notificationPayloadMode: "concise",
       limits: {
         maxWatchersTotal: 200,
@@ -16,6 +18,14 @@ describe("sentinel config schema", () => {
         maxIntervalMsFloor: 1000,
       },
     });
+  });
+
+  it("accepts explicit default group for grouped hook-session routing", () => {
+    const parsed = sentinelConfigSchema.safeParse?.({
+      hookSessionGroup: "ops",
+    });
+    expect(parsed?.success).toBe(true);
+    expect(parsed && parsed.success ? parsed.data.hookSessionGroup : undefined).toBe("ops");
   });
 
   it("accepts debug notification payload mode", () => {

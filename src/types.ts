@@ -34,6 +34,7 @@ export interface FireConfig {
   deadlineTemplate?: string;
   dedupeKeyTemplate?: string;
   notificationPayloadMode?: NotificationPayloadModeOverride;
+  sessionGroup?: string;
 }
 
 export interface RetryPolicy {
@@ -105,7 +106,11 @@ export interface SentinelConfig {
   allowedHosts: string[];
   localDispatchBase: string;
   dispatchAuthToken?: string;
+  /** @deprecated Backward-compatible alias for hookSessionPrefix. */
   hookSessionKey?: string;
+  hookSessionPrefix?: string;
+  hookSessionGroup?: string;
+  hookRelayDedupeWindowMs?: number;
   stateFilePath?: string;
   notificationPayloadMode?: NotificationPayloadMode;
   limits: SentinelLimits;

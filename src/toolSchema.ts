@@ -72,6 +72,12 @@ const FireConfigSchema = Type.Object({
       },
     ),
   ),
+  sessionGroup: Type.Optional(
+    Type.String({
+      description:
+        "Optional hook session group key. Watchers with the same key share one isolated callback-processing session.",
+    }),
+  ),
 });
 
 const RetryPolicySchema = Type.Object({

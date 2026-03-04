@@ -21,8 +21,22 @@
       },
       "hookSessionKey": {
         "type": "string",
-        "description": "Session key used when /hooks/sentinel enqueues system events into the LLM loop",
-        "default": "agent:main:main"
+        "description": "Deprecated alias for hookSessionPrefix. Sentinel always appends watcher/group segments to prevent a shared global callback session."
+      },
+      "hookSessionPrefix": {
+        "type": "string",
+        "description": "Base session key prefix used for isolated /hooks/sentinel callback sessions (default: agent:main:hooks:sentinel)",
+        "default": "agent:main:hooks:sentinel"
+      },
+      "hookSessionGroup": {
+        "type": "string",
+        "description": "Optional default session group key. When set, callbacks without explicit hookSessionGroup are routed to this group session."
+      },
+      "hookRelayDedupeWindowMs": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Suppress duplicate relay messages for the same dedupe key within this window (milliseconds)",
+        "default": 120000
       },
       "stateFilePath": {
         "type": "string",
@@ -79,8 +93,23 @@
       "placeholder": "sk-..."
     },
     "hookSessionKey": {
-      "label": "Sentinel Hook Session Key",
-      "help": "Session key that receives /hooks/sentinel callback events (default: agent:main:main)",
+      "label": "Hook Session Key (Deprecated)",
+      "help": "Deprecated alias for hookSessionPrefix. Sentinel appends watcher/group segments automatically.",
+      "advanced": true
+    },
+    "hookSessionPrefix": {
+      "label": "Hook Session Prefix",
+      "help": "Base prefix for isolated callback sessions (default: agent:main:hooks:sentinel)",
+      "advanced": true
+    },
+    "hookSessionGroup": {
+      "label": "Default Hook Session Group",
+      "help": "Optional default group key for callback sessions. Watchers with the same group share one isolated session.",
+      "advanced": true
+    },
+    "hookRelayDedupeWindowMs": {
+      "label": "Hook Relay Dedupe Window (ms)",
+      "help": "Suppress duplicate relay messages with the same dedupe key for this many milliseconds",
       "advanced": true
     },
     "stateFilePath": {

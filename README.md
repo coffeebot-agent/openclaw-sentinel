@@ -29,14 +29,24 @@ Add/update `~/.openclaw/openclaw.json`:
           // Default dispatch base for internal webhook callbacks.
           localDispatchBase: "http://127.0.0.1:18789",
 
-          // Optional: where /hooks/sentinel events are queued in the LLM loop.
-          hookSessionKey: "agent:main:main",
+          // Optional: base prefix for isolated /hooks/sentinel callback sessions.
+          // Sentinel appends :watcher:<id> by default (or :group:<key> when grouped).
+          hookSessionPrefix: "agent:main:hooks:sentinel",
 
-          // Optional: payload style for chat notifications sent via deliveryTargets.
+          // Optional: default group key for callbacks without explicit hookSessionGroup.
+          // hookSessionGroup: "ops-alerts",
+
+          // Optional: suppress duplicate relays by dedupe key within this time window.
+          hookRelayDedupeWindowMs: 120000,
+
+          // Optional: payload style for non-/hooks/sentinel deliveryTargets notifications.
           // "none" suppresses delivery-target message fan-out (callback still fires).
           // "concise" (default) sends human-friendly relay text only.
           // "debug" appends a structured sentinel envelope block for diagnostics.
           // notificationPayloadMode: "concise",
+
+          // Optional legacy alias for hookSessionPrefix (still supported).
+          // hookSessionKey: "agent:main:hooks:sentinel",
 
           // Optional: bearer token used for dispatch calls back to gateway.
           // Set this to your gateway auth token when gateway auth is enabled.
@@ -92,6 +102,7 @@ Sentinel also logs a runtime warning when that legacy root key is still observab
         "workflow": "alerts"
       },
       "priority": "high",
+      "sessionGroup": "portfolio-risk",
       "deadlineTemplate": "${timestamp}",
       "payloadTemplate": {
         "event": "${event.name}",
@@ -124,11 +135,11 @@ Use `sentinel_control`:
 1. Sentinel evaluates conditions.
 2. On match, it dispatches a generic callback envelope (`type: "sentinel.callback"`) to `localDispatchBase + webhookPath`.
 3. The envelope includes stable keys (`intent`, `context`, `watcher`, `trigger`, bounded `payload`, `deliveryTargets`, `source`) so downstream agent behavior is workflow-agnostic.
-4. It also sends a notification message to each configured `deliveryTargets` destination (defaults to the current chat context when watcher is created from a channel session).
-5. For `/hooks/sentinel`, the plugin route enqueues an instruction-prefixed system event plus structured JSON envelope and requests heartbeat wake.
-6. OpenClaw wakes and processes that event in the configured session (`hookSessionKey`, default `agent:main:main`).
+4. For `/hooks/sentinel`, delivery to user chat is relayed from the hook route using `deliveryTargets` (or inferred chat context when available) with a concise alert message.
+5. The `/hooks/sentinel` route enqueues an instruction-prefixed system event plus structured JSON envelope and requests heartbeat wake.
+6. OpenClaw processes each callback in an isolated hook session: per-watcher by default, or grouped when `hookSessionGroup` / `fire.sessionGroup` is set. Shared global hook-session mode is intentionally not supported.
 
-The `/hooks/sentinel` route is auto-registered on plugin startup (idempotent).
+The `/hooks/sentinel` route is auto-registered on plugin startup (idempotent). Relay notifications are dedupe-aware by callback dedupe key.
 
 Sample emitted envelope:
 

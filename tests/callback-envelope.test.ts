@@ -68,6 +68,26 @@ describe("callback envelope", () => {
     expect((envelope.trigger as any).priority).toBe("normal");
   });
 
+  it("propagates watcher fire.sessionGroup to callback envelope", () => {
+    const watcher = {
+      ...baseWatcher,
+      fire: {
+        ...baseWatcher.fire,
+        sessionGroup: "risk-desk",
+      },
+    } as any;
+
+    const envelope = createCallbackEnvelope({
+      watcher,
+      payload: { service: "auth", status: "degraded" },
+      payloadBody: { service: "auth", status: "degraded" },
+      matchedAt: "2026-03-04T15:00:00.000Z",
+      webhookPath: "/hooks/sentinel",
+    });
+
+    expect((envelope as any).hookSessionGroup).toBe("risk-desk");
+  });
+
   it("bounds oversized payload bodies", () => {
     const envelope = createCallbackEnvelope({
       watcher: baseWatcher as any,

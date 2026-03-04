@@ -7,12 +7,23 @@ import { DEFAULT_SENTINEL_WEBHOOK_PATH, DeliveryTarget, SentinelConfig } from ".
 import { WatcherManager } from "./watcherManager.js";
 
 const registeredWebhookPathsByRegistrar = new WeakMap<object, Set<string>>();
-const DEFAULT_HOOK_SESSION_KEY = "agent:main:main";
+const DEFAULT_HOOK_SESSION_PREFIX = "agent:main:hooks:sentinel";
+const DEFAULT_RELAY_DEDUPE_WINDOW_MS = 120_000;
 const MAX_SENTINEL_WEBHOOK_BODY_BYTES = 64 * 1024;
 const MAX_SENTINEL_WEBHOOK_TEXT_CHARS = 8000;
 const MAX_SENTINEL_PAYLOAD_JSON_CHARS = 2500;
 const SENTINEL_EVENT_INSTRUCTION_PREFIX =
   "SENTINEL_TRIGGER: This system event came from /hooks/sentinel. Evaluate action policy, decide whether to notify configured deliveryTargets, and execute safe follow-up actions.";
+
+const SUPPORTED_DELIVERY_CHANNELS = new Set([
+  "telegram",
+  "discord",
+  "slack",
+  "signal",
+  "imessage",
+  "whatsapp",
+  "line",
+]);
 
 function trimText(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`;
@@ -70,6 +81,15 @@ function normalizePath(path: string): string {
   return withSlash.length > 1 && withSlash.endsWith("/") ? withSlash.slice(0, -1) : withSlash;
 }
 
+function sanitizeSessionSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return sanitized.length > 0 ? sanitized.slice(0, 64) : "unknown";
+}
+
 function clipPayloadForPrompt(value: unknown): unknown {
   const serialized = JSON.stringify(value);
   if (!serialized) return value;
@@ -93,6 +113,7 @@ type SentinelEventEnvelope = {
   payload: unknown;
   dedupeKey: string;
   correlationId: string;
+  hookSessionGroup?: string;
   deliveryTargets?: DeliveryTarget[];
   source: {
     route: string;
@@ -100,19 +121,37 @@ type SentinelEventEnvelope = {
   };
 };
 
+function getNestedString(value: unknown, path: string[]): string | undefined {
+  let cursor: unknown = value;
+  for (const segment of path) {
+    if (!isRecord(cursor)) return undefined;
+    cursor = cursor[segment];
+  }
+  return asString(cursor);
+}
+
 function buildSentinelEventEnvelope(payload: Record<string, unknown>): SentinelEventEnvelope {
   const watcherId =
     asString(payload.watcherId) ??
-    (isRecord(payload.watcher) ? asString(payload.watcher.id) : undefined);
+    getNestedString(payload, ["watcher", "id"]) ??
+    getNestedString(payload, ["context", "watcherId"]);
+
   const eventName =
     asString(payload.eventName) ??
-    (isRecord(payload.event) ? asString(payload.event.name) : undefined);
+    getNestedString(payload, ["watcher", "eventName"]) ??
+    getNestedString(payload, ["event", "name"]);
+
   const skillId =
     asString(payload.skillId) ??
-    (isRecord(payload.watcher) ? asString(payload.watcher.skillId) : undefined) ??
+    getNestedString(payload, ["watcher", "skillId"]) ??
+    getNestedString(payload, ["context", "skillId"]) ??
     undefined;
+
   const matchedAt =
-    asIsoString(payload.matchedAt) ?? asIsoString(payload.timestamp) ?? new Date().toISOString();
+    asIsoString(payload.matchedAt) ??
+    asIsoString(payload.timestamp) ??
+    asIsoString(getNestedString(payload, ["trigger", "matchedAt"])) ??
+    new Date().toISOString();
 
   const rawPayload =
     payload.payload ??
@@ -130,11 +169,21 @@ function buildSentinelEventEnvelope(payload: Record<string, unknown>): SentinelE
     asString(payload.dedupeKey) ??
     asString(payload.correlationId) ??
     asString(payload.correlationID) ??
+    getNestedString(payload, ["trigger", "dedupeKey"]) ??
     generatedDedupe;
 
   const deliveryTargets = Array.isArray(payload.deliveryTargets)
     ? payload.deliveryTargets.filter(isDeliveryTarget)
     : undefined;
+
+  const sourceRoute =
+    getNestedString(payload, ["source", "route"]) ?? DEFAULT_SENTINEL_WEBHOOK_PATH;
+  const sourcePlugin = getNestedString(payload, ["source", "plugin"]) ?? "openclaw-sentinel";
+
+  const hookSessionGroup =
+    asString(payload.hookSessionGroup) ??
+    asString(payload.sessionGroup) ??
+    getNestedString(payload, ["watcher", "sessionGroup"]);
 
   const envelope: SentinelEventEnvelope = {
     watcherId: watcherId ?? null,
@@ -144,22 +193,149 @@ function buildSentinelEventEnvelope(payload: Record<string, unknown>): SentinelE
     dedupeKey,
     correlationId: dedupeKey,
     source: {
-      route: DEFAULT_SENTINEL_WEBHOOK_PATH,
-      plugin: "openclaw-sentinel",
+      route: sourceRoute,
+      plugin: sourcePlugin,
     },
   };
 
   if (skillId) envelope.skillId = skillId;
+  if (hookSessionGroup) envelope.hookSessionGroup = hookSessionGroup;
   if (deliveryTargets && deliveryTargets.length > 0) envelope.deliveryTargets = deliveryTargets;
 
   return envelope;
 }
 
-function buildSentinelSystemEvent(payload: Record<string, unknown>): string {
-  const envelope = buildSentinelEventEnvelope(payload);
+function buildSentinelSystemEvent(envelope: SentinelEventEnvelope): string {
   const jsonEnvelope = JSON.stringify(envelope, null, 2);
   const text = `${SENTINEL_EVENT_INSTRUCTION_PREFIX}\nSENTINEL_ENVELOPE_JSON:\n${jsonEnvelope}`;
   return trimText(text, MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
+}
+
+function normalizeDeliveryTargets(targets: DeliveryTarget[]): DeliveryTarget[] {
+  const deduped = new Map<string, DeliveryTarget>();
+  for (const target of targets) {
+    const channel = asString(target.channel);
+    const to = asString(target.to);
+    if (!channel || !to || !SUPPORTED_DELIVERY_CHANNELS.has(channel)) continue;
+    const accountId = asString(target.accountId);
+    const key = `${channel}:${to}:${accountId ?? ""}`;
+    deduped.set(key, { channel, to, ...(accountId ? { accountId } : {}) });
+  }
+  return [...deduped.values()];
+}
+
+function inferTargetFromSessionKey(
+  sessionKey: string,
+  accountId?: string,
+): DeliveryTarget | undefined {
+  const segments = sessionKey
+    .split(":")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (segments.length < 5) return undefined;
+
+  const channel = segments[2];
+  const to = segments.at(-1);
+  if (!channel || !to || !SUPPORTED_DELIVERY_CHANNELS.has(channel)) return undefined;
+
+  return {
+    channel,
+    to,
+    ...(accountId ? { accountId } : {}),
+  };
+}
+
+function inferRelayTargets(
+  payload: Record<string, unknown>,
+  envelope: SentinelEventEnvelope,
+): DeliveryTarget[] {
+  if (envelope.deliveryTargets?.length) {
+    return normalizeDeliveryTargets(envelope.deliveryTargets);
+  }
+
+  const inferred: DeliveryTarget[] = [];
+
+  if (isDeliveryTarget(payload.currentChat)) inferred.push(payload.currentChat);
+
+  const sourceCurrentChat = isRecord(payload.source) ? payload.source.currentChat : undefined;
+  if (isDeliveryTarget(sourceCurrentChat)) inferred.push(sourceCurrentChat);
+
+  const messageChannel = asString(payload.messageChannel);
+  const requesterSenderId = asString(payload.requesterSenderId);
+  if (messageChannel && requesterSenderId && SUPPORTED_DELIVERY_CHANNELS.has(messageChannel)) {
+    inferred.push({ channel: messageChannel, to: requesterSenderId });
+  }
+
+  const fromSessionKey = asString(payload.sessionKey);
+  if (fromSessionKey) {
+    const target = inferTargetFromSessionKey(fromSessionKey, asString(payload.agentAccountId));
+    if (target) inferred.push(target);
+  }
+
+  const sourceSessionKey = getNestedString(payload, ["source", "sessionKey"]);
+  if (sourceSessionKey) {
+    const sourceAccountId = getNestedString(payload, ["source", "accountId"]);
+    const target = inferTargetFromSessionKey(sourceSessionKey, sourceAccountId);
+    if (target) inferred.push(target);
+  }
+
+  return normalizeDeliveryTargets(inferred);
+}
+
+function summarizeContext(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const entries = Object.entries(value).slice(0, 3);
+  if (entries.length === 0) return undefined;
+
+  const chunks = entries.map(([key, val]) => {
+    if (typeof val === "string") return `${key}=${trimText(val, 64)}`;
+    if (typeof val === "number" || typeof val === "boolean") return `${key}=${String(val)}`;
+    return `${key}=${trimText(JSON.stringify(val), 64)}`;
+  });
+  return chunks.join(" · ");
+}
+
+function buildRelayMessage(envelope: SentinelEventEnvelope): string {
+  const title = envelope.eventName ? `Sentinel alert: ${envelope.eventName}` : "Sentinel alert";
+  const watcher = envelope.watcherId ? `watcher ${envelope.watcherId}` : "watcher unknown";
+
+  const payloadRecord = isRecord(envelope.payload) ? envelope.payload : undefined;
+  const contextSummary = summarizeContext(
+    payloadRecord && isRecord(payloadRecord.context) ? payloadRecord.context : payloadRecord,
+  );
+
+  const lines = [title, `${watcher} · ${envelope.matchedAt}`];
+  if (contextSummary) lines.push(contextSummary);
+
+  const text = lines.join("\n").trim();
+  return text.length > 0 ? text : "Sentinel callback received.";
+}
+
+function buildIsolatedHookSessionKey(
+  envelope: SentinelEventEnvelope,
+  config: SentinelConfig,
+): string {
+  const rawPrefix =
+    asString(config.hookSessionKey) ??
+    asString(config.hookSessionPrefix) ??
+    DEFAULT_HOOK_SESSION_PREFIX;
+  const prefix = rawPrefix.replace(/:+$/g, "");
+
+  const group = asString(envelope.hookSessionGroup) ?? asString(config.hookSessionGroup);
+  if (group) {
+    return `${prefix}:group:${sanitizeSessionSegment(group)}`;
+  }
+
+  if (envelope.watcherId) {
+    return `${prefix}:watcher:${sanitizeSessionSegment(envelope.watcherId)}`;
+  }
+
+  if (envelope.dedupeKey) {
+    return `${prefix}:event:${sanitizeSessionSegment(envelope.dedupeKey.slice(0, 24))}`;
+  }
+
+  return `${prefix}:event:unknown`;
 }
 
 async function readSentinelWebhookPayload(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -248,7 +424,8 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
     allowedHosts: [],
     localDispatchBase: "http://127.0.0.1:18789",
     dispatchAuthToken: process.env.SENTINEL_DISPATCH_TOKEN,
-    hookSessionKey: DEFAULT_HOOK_SESSION_KEY,
+    hookSessionPrefix: DEFAULT_HOOK_SESSION_PREFIX,
+    hookRelayDedupeWindowMs: DEFAULT_RELAY_DEDUPE_WINDOW_MS,
     notificationPayloadMode: "concise",
     limits: {
       maxWatchersTotal: 200,
@@ -257,6 +434,24 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
       maxIntervalMsFloor: 1000,
     },
     ...overrides,
+  };
+
+  const recentRelayByDedupe = new Map<string, number>();
+
+  const shouldRelayForDedupe = (dedupeKey: string): boolean => {
+    const windowMs = Math.max(0, config.hookRelayDedupeWindowMs ?? DEFAULT_RELAY_DEDUPE_WINDOW_MS);
+    if (windowMs === 0) return true;
+
+    const now = Date.now();
+    for (const [key, ts] of recentRelayByDedupe.entries()) {
+      if (now - ts > windowMs) recentRelayByDedupe.delete(key);
+    }
+
+    const prev = recentRelayByDedupe.get(dedupeKey);
+    if (typeof prev === "number" && now - prev <= windowMs) return false;
+
+    recentRelayByDedupe.set(dedupeKey, now);
+    return true;
   };
 
   const manager = new WatcherManager(config, {
@@ -321,13 +516,41 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
 
             try {
               const payload = await readSentinelWebhookPayload(req);
-              const sessionKey = config.hookSessionKey ?? DEFAULT_HOOK_SESSION_KEY;
-              const text = buildSentinelSystemEvent(payload);
+              const envelope = buildSentinelEventEnvelope(payload);
+              const sessionKey = buildIsolatedHookSessionKey(envelope, config);
+              const text = buildSentinelSystemEvent(envelope);
               const enqueued = api.runtime.system.enqueueSystemEvent(text, { sessionKey });
               api.runtime.system.requestHeartbeatNow({
                 reason: "hook:sentinel",
                 sessionKey,
               });
+
+              const relayTargets = inferRelayTargets(payload, envelope);
+              const relayMessage = buildRelayMessage(envelope);
+              const relay = {
+                dedupeKey: envelope.dedupeKey,
+                attempted: relayTargets.length,
+                delivered: 0,
+                failed: 0,
+                deduped: false,
+              };
+
+              if (relayTargets.length > 0) {
+                if (!shouldRelayForDedupe(envelope.dedupeKey)) {
+                  relay.deduped = true;
+                } else {
+                  await Promise.all(
+                    relayTargets.map(async (target) => {
+                      try {
+                        await notifyDeliveryTarget(api, target, relayMessage);
+                        relay.delivered += 1;
+                      } catch {
+                        relay.failed += 1;
+                      }
+                    }),
+                  );
+                }
+              }
 
               res.writeHead(200, { "content-type": "application/json" });
               res.end(
@@ -336,6 +559,7 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
                   route: path,
                   sessionKey,
                   enqueued,
+                  relay,
                 }),
               );
             } catch (err) {

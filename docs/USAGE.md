@@ -20,8 +20,10 @@ In config, you **must** set `allowedHosts` — no hosts are allowed by default. 
         config: {
           allowedHosts: ["api.github.com", "api.coingecko.com", "status.example.com"],
           localDispatchBase: "http://127.0.0.1:18789",
-          hookSessionKey: "agent:main:main",
+          hookSessionPrefix: "agent:main:hooks:sentinel",
+          hookRelayDedupeWindowMs: 120000,
           notificationPayloadMode: "concise",
+          // optional legacy alias (supported): hookSessionKey: "agent:main:hooks:sentinel",
         },
       },
     },
@@ -41,6 +43,7 @@ Move the config to `plugins.entries.openclaw-sentinel.config`.
 - Send a JSON object.
 - Preferred shape is a callback envelope (`type: "sentinel.callback"`).
 - Sentinel prepends instructions for the agent to interpret intent/context, apply policy, act, and notify configured targets.
+- Callback processing is isolated by watcher session by default (`...:watcher:<id>`), with optional explicit grouping via `hookSessionGroup`.
 - Legacy `text`/`message` payloads remain supported for backward compatibility.
 
 Example structured wake event text:
@@ -90,6 +93,7 @@ Create a watcher via `sentinel_control`:
         "runbook": "ops-degraded-service"
       },
       "priority": "high",
+      "sessionGroup": "ops-degraded",
       "payloadTemplate": {
         "event": "${event.name}",
         "component": "${payload.component}",
@@ -101,6 +105,14 @@ Create a watcher via `sentinel_control`:
   }
 }
 ```
+
+### Hook-session routing notes
+
+- `/hooks/sentinel` callbacks are routed to isolated sessions by default: `hookSessionPrefix:watcher:<watcher-id>`.
+- To intentionally group multiple watchers into one isolated session, set either:
+  - plugin config: `hookSessionGroup`, or
+  - per-watcher: `watcher.fire.sessionGroup` (wins over config default).
+- Shared global callback sessions are intentionally not supported.
 
 ---
 

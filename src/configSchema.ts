@@ -24,6 +24,9 @@ const ConfigSchema = Type.Object(
     localDispatchBase: Type.String({ minLength: 1 }),
     dispatchAuthToken: Type.Optional(Type.String()),
     hookSessionKey: Type.Optional(Type.String({ minLength: 1 })),
+    hookSessionPrefix: Type.Optional(Type.String({ minLength: 1 })),
+    hookSessionGroup: Type.Optional(Type.String({ minLength: 1 })),
+    hookRelayDedupeWindowMs: Type.Optional(Type.Integer({ minimum: 0 })),
     stateFilePath: Type.Optional(Type.String()),
     notificationPayloadMode: Type.Optional(NotificationPayloadModeSchema),
     limits: Type.Optional(LimitsSchema),
@@ -42,8 +45,15 @@ function withDefaults(value: Record<string, unknown>): Record<string, unknown> {
         : "http://127.0.0.1:18789",
     dispatchAuthToken:
       typeof value.dispatchAuthToken === "string" ? value.dispatchAuthToken : undefined,
-    hookSessionKey:
-      typeof value.hookSessionKey === "string" ? value.hookSessionKey : "agent:main:main",
+    hookSessionKey: typeof value.hookSessionKey === "string" ? value.hookSessionKey : undefined,
+    hookSessionPrefix:
+      typeof value.hookSessionPrefix === "string"
+        ? value.hookSessionPrefix
+        : "agent:main:hooks:sentinel",
+    hookSessionGroup:
+      typeof value.hookSessionGroup === "string" ? value.hookSessionGroup : undefined,
+    hookRelayDedupeWindowMs:
+      typeof value.hookRelayDedupeWindowMs === "number" ? value.hookRelayDedupeWindowMs : 120000,
     stateFilePath: typeof value.stateFilePath === "string" ? value.stateFilePath : undefined,
     notificationPayloadMode:
       value.notificationPayloadMode === "none"
@@ -134,8 +144,25 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
       hookSessionKey: {
         type: "string",
         description:
-          "Session key used when /hooks/sentinel enqueues system events into the LLM loop",
-        default: "agent:main:main",
+          "Deprecated alias for hookSessionPrefix. Sentinel always appends watcher/group segments to prevent a shared global callback session.",
+      },
+      hookSessionPrefix: {
+        type: "string",
+        description:
+          "Base session key prefix used for isolated /hooks/sentinel callback sessions (default: agent:main:hooks:sentinel)",
+        default: "agent:main:hooks:sentinel",
+      },
+      hookSessionGroup: {
+        type: "string",
+        description:
+          "Optional default session group key. When set, callbacks without explicit hookSessionGroup are routed to this group session.",
+      },
+      hookRelayDedupeWindowMs: {
+        type: "number",
+        minimum: 0,
+        description:
+          "Suppress duplicate relay messages for the same dedupe key within this window (milliseconds)",
+        default: 120000,
       },
       stateFilePath: {
         type: "string",
@@ -193,8 +220,23 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
       placeholder: "sk-...",
     },
     hookSessionKey: {
-      label: "Sentinel Hook Session Key",
-      help: "Session key that receives /hooks/sentinel callback events (default: agent:main:main)",
+      label: "Hook Session Key (Deprecated)",
+      help: "Deprecated alias for hookSessionPrefix. Sentinel appends watcher/group segments automatically.",
+      advanced: true,
+    },
+    hookSessionPrefix: {
+      label: "Hook Session Prefix",
+      help: "Base prefix for isolated callback sessions (default: agent:main:hooks:sentinel)",
+      advanced: true,
+    },
+    hookSessionGroup: {
+      label: "Default Hook Session Group",
+      help: "Optional default group key for callback sessions. Watchers with the same group share one isolated session.",
+      advanced: true,
+    },
+    hookRelayDedupeWindowMs: {
+      label: "Hook Relay Dedupe Window (ms)",
+      help: "Suppress duplicate relay messages with the same dedupe key for this many milliseconds",
       advanced: true,
     },
     stateFilePath: {

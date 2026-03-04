@@ -268,7 +268,13 @@ export class WatcherManager {
           await this.dispatcher.dispatch(webhookPath, body);
 
           const deliveryMode = resolveNotificationPayloadMode(this.config, watcher);
-          if (deliveryMode !== "none" && watcher.deliveryTargets?.length && this.notifier) {
+          const isSentinelWebhook = webhookPath === DEFAULT_SENTINEL_WEBHOOK_PATH;
+          if (
+            deliveryMode !== "none" &&
+            watcher.deliveryTargets?.length &&
+            this.notifier &&
+            !isSentinelWebhook
+          ) {
             const attemptedAt = new Date().toISOString();
             const message = buildDeliveryNotificationMessage(watcher, body, deliveryMode);
             const failures: Array<{ target: DeliveryTarget; error: string }> = [];

@@ -73,6 +73,7 @@ export const WatcherSchema = Type.Object(
             Type.Literal("debug"),
           ]),
         ),
+        sessionGroup: Type.Optional(Type.String({ minLength: 1 })),
       },
       { additionalProperties: false },
     ),
