@@ -1,5 +1,11 @@
 # @coffeexdev/openclaw-sentinel
 
+## 0.2.1
+
+### Patch Changes
+
+- ca36a9c: Fix OpenClaw extension metadata path by removing the leading `./` from `openclaw.extensions` so installs on v0.2.x no longer crash when loading the plugin entry.
+
 ## 0.2.0
 
 ### Minor Changes
