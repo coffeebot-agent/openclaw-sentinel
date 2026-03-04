@@ -62,7 +62,41 @@ Create a watcher via `sentinel_control`:
 
 ---
 
-## 3) One-shot trigger (`fireOnce`)
+## 3) Delivery targets (default + override)
+
+By default, when you create a watcher via `sentinel_control` in a channel session, Sentinel stores a delivery target for that current chat context.
+
+You can override with explicit `deliveryTargets` (supports multiple destinations):
+
+```json
+{
+  "action": "create",
+  "watcher": {
+    "id": "status-watch-multi",
+    "skillId": "skills.ops",
+    "enabled": true,
+    "strategy": "http-poll",
+    "endpoint": "https://status.example.com/api/health",
+    "intervalMs": 10000,
+    "match": "all",
+    "conditions": [{ "path": "status", "op": "eq", "value": "degraded" }],
+    "fire": {
+      "webhookPath": "/hooks/agent",
+      "eventName": "service_degraded",
+      "payloadTemplate": { "event": "${event.name}", "status": "${payload.status}" }
+    },
+    "retry": { "maxRetries": 8, "baseMs": 500, "maxMs": 30000 },
+    "deliveryTargets": [
+      { "channel": "telegram", "to": "5613673222" },
+      { "channel": "discord", "to": "123456789012345678", "accountId": "main" }
+    ]
+  }
+}
+```
+
+---
+
+## 4) One-shot trigger (`fireOnce`)
 
 Use `fireOnce: true` to dispatch once and auto-disable:
 
@@ -95,7 +129,7 @@ Use `fireOnce: true` to dispatch once and auto-disable:
 
 ---
 
-## 4) CI run completion monitor
+## 5) CI run completion monitor
 
 ```json
 {
@@ -131,7 +165,7 @@ Use `fireOnce: true` to dispatch once and auto-disable:
 
 ---
 
-## 5) Runtime control actions
+## 6) Runtime control actions
 
 Check status:
 
@@ -153,7 +187,7 @@ Remove:
 
 ---
 
-## 6) Skill integration pattern
+## 7) Skill integration pattern
 
 Typical skill flow:
 

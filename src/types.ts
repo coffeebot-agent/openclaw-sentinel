@@ -32,6 +32,12 @@ export interface RetryPolicy {
   maxMs: number;
 }
 
+export interface DeliveryTarget {
+  channel: string;
+  to: string;
+  accountId?: string;
+}
+
 export interface WatcherDefinition {
   id: string;
   skillId: string;
@@ -48,6 +54,7 @@ export interface WatcherDefinition {
   fire: FireConfig;
   retry: RetryPolicy;
   fireOnce?: boolean;
+  deliveryTargets?: DeliveryTarget[];
   metadata?: Record<string, string>;
 }
 
@@ -59,6 +66,12 @@ export interface WatcherRuntimeState {
   lastPayloadHash?: string;
   lastPayload?: unknown;
   lastEvaluated?: string;
+  lastDelivery?: {
+    attemptedAt: string;
+    successCount: number;
+    failureCount: number;
+    failures?: Array<{ target: DeliveryTarget; error: string }>;
+  };
 }
 
 export interface SentinelStateFile {

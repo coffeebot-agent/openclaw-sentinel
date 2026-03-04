@@ -9,11 +9,20 @@ import { sseStrategy } from "./strategies/sse.js";
 import { websocketStrategy } from "./strategies/websocket.js";
 import {
   DEFAULT_SENTINEL_WEBHOOK_PATH,
+  DeliveryTarget,
   GatewayWebhookDispatcher,
   SentinelConfig,
   WatcherDefinition,
   WatcherRuntimeState,
 } from "./types.js";
+
+export interface WatcherCreateContext {
+  deliveryTargets?: DeliveryTarget[];
+}
+
+export interface WatcherNotifier {
+  notify(target: DeliveryTarget, message: string): Promise<void>;
+}
 
 const backoff = (base: number, max: number, failures: number) => {
   const raw = Math.min(max, base * 2 ** failures);
@@ -40,6 +49,7 @@ export class WatcherManager {
   constructor(
     private config: SentinelConfig,
     private dispatcher: GatewayWebhookDispatcher,
+    private notifier?: WatcherNotifier,
   ) {
     this.statePath = config.stateFilePath ?? defaultStatePath();
   }
@@ -70,8 +80,11 @@ export class WatcherManager {
     for (const watcher of this.list().filter((w) => w.enabled)) await this.startWatcher(watcher.id);
   }
 
-  async create(input: unknown): Promise<WatcherDefinition> {
+  async create(input: unknown, ctx?: WatcherCreateContext): Promise<WatcherDefinition> {
     const watcher = validateWatcherDefinition(input);
+    if (!watcher.deliveryTargets?.length && ctx?.deliveryTargets?.length) {
+      watcher.deliveryTargets = ctx.deliveryTargets;
+    }
     assertHostAllowed(this.config, watcher.endpoint);
     assertWatcherLimits(this.config, this.list(), watcher);
     if (this.watchers.has(watcher.id)) throw new Error(`Watcher already exists: ${watcher.id}`);
@@ -87,6 +100,10 @@ export class WatcherManager {
   }
   status(id: string): WatcherRuntimeState | undefined {
     return this.runtime[id];
+  }
+
+  setNotifier(notifier: WatcherNotifier | undefined): void {
+    this.notifier = notifier;
   }
 
   setWebhookRegistrationStatus(status: "ok" | "error", message?: string, path?: string): void {
@@ -187,6 +204,35 @@ export class WatcherManager {
             watcher.fire.webhookPath ?? DEFAULT_SENTINEL_WEBHOOK_PATH,
             body,
           );
+
+          if (watcher.deliveryTargets?.length && this.notifier) {
+            const attemptedAt = new Date().toISOString();
+            const message = JSON.stringify(body);
+            const failures: Array<{ target: DeliveryTarget; error: string }> = [];
+            let successCount = 0;
+
+            await Promise.all(
+              watcher.deliveryTargets.map(async (target) => {
+                try {
+                  await this.notifier?.notify(target, message);
+                  successCount += 1;
+                } catch (err) {
+                  failures.push({
+                    target,
+                    error: String((err as Error)?.message ?? err),
+                  });
+                }
+              }),
+            );
+
+            rt.lastDelivery = {
+              attemptedAt,
+              successCount,
+              failureCount: failures.length,
+              failures: failures.length > 0 ? failures : undefined,
+            };
+          }
+
           if (watcher.fireOnce) {
             watcher.enabled = false;
             await this.stopWatcher(id);

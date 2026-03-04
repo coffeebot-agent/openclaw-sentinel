@@ -65,6 +65,19 @@ const WatcherSchema = Type.Object(
       { additionalProperties: false },
     ),
     fireOnce: Type.Optional(Type.Boolean()),
+    deliveryTargets: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            channel: Type.String({ minLength: 1 }),
+            to: Type.String({ minLength: 1 }),
+            accountId: Type.Optional(Type.String({ minLength: 1 })),
+          },
+          { additionalProperties: false },
+        ),
+        { minItems: 1 },
+      ),
+    ),
     metadata: Type.Optional(Type.Record(Type.String(), Type.String())),
   },
   { additionalProperties: false },

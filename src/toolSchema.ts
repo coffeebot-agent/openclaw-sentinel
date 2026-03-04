@@ -46,6 +46,17 @@ const RetryPolicySchema = Type.Object({
   maxMs: Type.Number({ description: "Maximum delay cap in milliseconds" }),
 });
 
+const DeliveryTargetSchema = Type.Object(
+  {
+    channel: Type.String({ description: "Channel/provider id (e.g. telegram, discord)" }),
+    to: Type.String({ description: "Destination id within the channel" }),
+    accountId: Type.Optional(
+      Type.String({ description: "Optional account id for multi-account channels" }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 const WatcherSchema = Type.Object(
   {
     id: Type.String({ description: "Unique watcher identifier" }),
@@ -84,6 +95,12 @@ const WatcherSchema = Type.Object(
     retry: RetryPolicySchema,
     fireOnce: Type.Optional(
       Type.Boolean({ description: "If true, the watcher disables itself after firing once" }),
+    ),
+    deliveryTargets: Type.Optional(
+      Type.Array(DeliveryTargetSchema, {
+        description:
+          "Optional notification delivery targets. Defaults to the current chat/session context when omitted.",
+      }),
     ),
     metadata: Type.Optional(
       Type.Record(Type.String(), Type.String(), { description: "Arbitrary key-value metadata" }),

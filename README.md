@@ -88,8 +88,9 @@ Use `sentinel_control`:
 
 1. Sentinel evaluates conditions.
 2. On match, it dispatches to `localDispatchBase + webhookPath`.
-3. For `/hooks/sentinel`, the plugin route enqueues a system event and requests heartbeat wake.
-4. OpenClaw wakes and processes that event in the configured session (`hookSessionKey`, default `agent:main:main`).
+3. It also sends a notification message to each configured `deliveryTargets` destination (defaults to the current chat context when watcher is created from a channel session).
+4. For `/hooks/sentinel`, the plugin route enqueues a system event and requests heartbeat wake.
+5. OpenClaw wakes and processes that event in the configured session (`hookSessionKey`, default `agent:main:main`).
 
 The `/hooks/sentinel` route is auto-registered on plugin startup (idempotent).
 
@@ -143,10 +144,16 @@ It **does not** execute user-authored code from watcher definitions.
         "ts": "${timestamp}"
       }
     },
-    "retry": { "maxRetries": 5, "baseMs": 250, "maxMs": 5000 }
+    "retry": { "maxRetries": 5, "baseMs": 250, "maxMs": 5000 },
+    "deliveryTargets": [
+      { "channel": "telegram", "to": "5613673222" },
+      { "channel": "discord", "to": "123456789012345678", "accountId": "main" }
+    ]
   }
 }
 ```
+
+`deliveryTargets` is optional. If omitted on `create`, Sentinel infers a default target from the current tool/session context (channel + current peer).
 
 ## Runtime controls
 
