@@ -61,6 +61,32 @@ describe("sentinel config schema", () => {
     }
   });
 
+  it("trims empty dispatchAuthToken to undefined", () => {
+    const parsed = sentinelConfigSchema.safeParse?.({ dispatchAuthToken: "   " });
+    expect(parsed?.success).toBe(true);
+    if (parsed?.success) {
+      expect(parsed.data?.dispatchAuthToken).toBeUndefined();
+    }
+  });
+
+  it("rejects non-finite top-level numeric config values", () => {
+    const parsed = sentinelConfigSchema.safeParse?.({
+      hookResponseTimeoutMs: Number.POSITIVE_INFINITY,
+    });
+    expect(parsed?.success).toBe(false);
+    const issue = parsed && !parsed.success ? parsed.error?.issues?.[0] : undefined;
+    expect(issue?.path).toEqual(["hookResponseTimeoutMs"]);
+  });
+
+  it("rejects non-finite numeric limit values", () => {
+    const parsed = sentinelConfigSchema.safeParse?.({
+      limits: { maxWatchersTotal: Number.NaN },
+    });
+    expect(parsed?.success).toBe(false);
+    const issue = parsed && !parsed.success ? parsed.error?.issues?.[0] : undefined;
+    expect(issue?.path).toEqual(["limits", "maxWatchersTotal"]);
+  });
+
   it("rejects invalid localDispatchBase URL", () => {
     const parsed = sentinelConfigSchema.safeParse?.({ localDispatchBase: "not-a-url" });
     expect(parsed?.success).toBe(false);

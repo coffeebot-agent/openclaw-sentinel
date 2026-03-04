@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { TemplateValueSchema } from "./templateValueSchema.js";
 
 const TemplateValueRefSchema = Type.Ref(TemplateValueSchema);
+const WATCHER_ID_PATTERN = "^[A-Za-z0-9_-]{1,128}$";
 
 const ConditionSchema = Type.Object({
   path: Type.String({ description: "JSONPath expression to evaluate against the response" }),
@@ -99,7 +100,11 @@ const DeliveryTargetSchema = Type.Object(
 
 const WatcherSchema = Type.Object(
   {
-    id: Type.String({ description: "Unique watcher identifier" }),
+    id: Type.String({
+      pattern: WATCHER_ID_PATTERN,
+      maxLength: 128,
+      description: "Unique watcher identifier (letters, numbers, hyphen, underscore)",
+    }),
     skillId: Type.String({ description: "ID of the skill that owns this watcher" }),
     enabled: Type.Boolean({ description: "Whether the watcher is actively polling" }),
     strategy: Type.Union(
@@ -184,7 +189,11 @@ const CreateActionSchema = Type.Object(
 const IdActionSchema = Type.Object(
   {
     action: IdActionNameSchema,
-    id: Type.String({ description: "Watcher ID for action target" }),
+    id: Type.String({
+      pattern: WATCHER_ID_PATTERN,
+      maxLength: 128,
+      description: "Watcher ID for action target",
+    }),
   },
   { additionalProperties: false },
 );
@@ -209,7 +218,13 @@ export const SentinelToolSchema = Type.Object(
   {
     action: AnyActionNameSchema,
     watcher: Type.Optional(WatcherSchema),
-    id: Type.Optional(Type.String({ description: "Watcher ID for action target" })),
+    id: Type.Optional(
+      Type.String({
+        pattern: WATCHER_ID_PATTERN,
+        maxLength: 128,
+        description: "Watcher ID for action target",
+      }),
+    ),
   },
   {
     additionalProperties: false,

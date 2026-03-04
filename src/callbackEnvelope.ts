@@ -8,6 +8,7 @@ import {
   WatcherDefinition,
 } from "./types.js";
 import { renderTemplate } from "./template.js";
+import { getPath } from "./utils.js";
 
 const MAX_PAYLOAD_JSON_CHARS = 4000;
 
@@ -68,10 +69,6 @@ function buildDeliveryContextFromMetadata(
   }
 
   return Object.keys(context).length > 0 ? context : undefined;
-}
-
-function getPath(obj: unknown, path: string): unknown {
-  return path.split(".").reduce((acc: any, part) => acc?.[part], obj as any);
 }
 
 function getTemplateString(

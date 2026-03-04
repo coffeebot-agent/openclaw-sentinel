@@ -39,6 +39,46 @@ const ConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+function trimToUndefined(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function findInvalidNumericPath(input: Record<string, unknown>): string | undefined {
+  const numericPaths = [
+    "hookRelayDedupeWindowMs",
+    "hookResponseTimeoutMs",
+    "hookResponseDedupeWindowMs",
+  ] as const;
+
+  for (const key of numericPaths) {
+    const value = input[key];
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      return `/${key}`;
+    }
+  }
+
+  const limits = input.limits;
+  if (limits && typeof limits === "object" && !Array.isArray(limits)) {
+    const limitsRecord = limits as Record<string, unknown>;
+    const limitKeys = [
+      "maxWatchersTotal",
+      "maxWatchersPerSkill",
+      "maxConditionsPerWatcher",
+      "maxIntervalMsFloor",
+    ] as const;
+    for (const key of limitKeys) {
+      const value = limitsRecord[key];
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        return `/limits/${key}`;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function withDefaults(value: Record<string, unknown>): Record<string, unknown> {
   const limitsIn = (value.limits as Record<string, unknown> | undefined) ?? {};
 
@@ -48,8 +88,7 @@ function withDefaults(value: Record<string, unknown>): Record<string, unknown> {
       typeof value.localDispatchBase === "string" && value.localDispatchBase.length > 0
         ? value.localDispatchBase
         : "http://127.0.0.1:18789",
-    dispatchAuthToken:
-      typeof value.dispatchAuthToken === "string" ? value.dispatchAuthToken : undefined,
+    dispatchAuthToken: trimToUndefined(value.dispatchAuthToken),
     hookSessionKey: typeof value.hookSessionKey === "string" ? value.hookSessionKey : undefined,
     hookSessionPrefix:
       typeof value.hookSessionPrefix === "string"
@@ -58,12 +97,19 @@ function withDefaults(value: Record<string, unknown>): Record<string, unknown> {
     hookSessionGroup:
       typeof value.hookSessionGroup === "string" ? value.hookSessionGroup : undefined,
     hookRelayDedupeWindowMs:
-      typeof value.hookRelayDedupeWindowMs === "number" ? value.hookRelayDedupeWindowMs : 120000,
+      typeof value.hookRelayDedupeWindowMs === "number" &&
+      Number.isFinite(value.hookRelayDedupeWindowMs)
+        ? value.hookRelayDedupeWindowMs
+        : 120000,
     hookResponseTimeoutMs:
-      typeof value.hookResponseTimeoutMs === "number" ? value.hookResponseTimeoutMs : 30000,
+      typeof value.hookResponseTimeoutMs === "number" &&
+      Number.isFinite(value.hookResponseTimeoutMs)
+        ? value.hookResponseTimeoutMs
+        : 30000,
     hookResponseFallbackMode: value.hookResponseFallbackMode === "none" ? "none" : "concise",
     hookResponseDedupeWindowMs:
-      typeof value.hookResponseDedupeWindowMs === "number"
+      typeof value.hookResponseDedupeWindowMs === "number" &&
+      Number.isFinite(value.hookResponseDedupeWindowMs)
         ? value.hookResponseDedupeWindowMs
         : 120000,
     stateFilePath: typeof value.stateFilePath === "string" ? value.stateFilePath : undefined,
@@ -75,15 +121,24 @@ function withDefaults(value: Record<string, unknown>): Record<string, unknown> {
           : "concise",
     limits: {
       maxWatchersTotal:
-        typeof limitsIn.maxWatchersTotal === "number" ? limitsIn.maxWatchersTotal : 200,
+        typeof limitsIn.maxWatchersTotal === "number" && Number.isFinite(limitsIn.maxWatchersTotal)
+          ? limitsIn.maxWatchersTotal
+          : 200,
       maxWatchersPerSkill:
-        typeof limitsIn.maxWatchersPerSkill === "number" ? limitsIn.maxWatchersPerSkill : 20,
+        typeof limitsIn.maxWatchersPerSkill === "number" &&
+        Number.isFinite(limitsIn.maxWatchersPerSkill)
+          ? limitsIn.maxWatchersPerSkill
+          : 20,
       maxConditionsPerWatcher:
-        typeof limitsIn.maxConditionsPerWatcher === "number"
+        typeof limitsIn.maxConditionsPerWatcher === "number" &&
+        Number.isFinite(limitsIn.maxConditionsPerWatcher)
           ? limitsIn.maxConditionsPerWatcher
           : 25,
       maxIntervalMsFloor:
-        typeof limitsIn.maxIntervalMsFloor === "number" ? limitsIn.maxIntervalMsFloor : 1000,
+        typeof limitsIn.maxIntervalMsFloor === "number" &&
+        Number.isFinite(limitsIn.maxIntervalMsFloor)
+          ? limitsIn.maxIntervalMsFloor
+          : 1000,
     },
   };
 }
@@ -107,7 +162,18 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
       };
     }
 
-    const candidate = withDefaults(value as Record<string, unknown>);
+    const source = value as Record<string, unknown>;
+    const invalidNumericPath = findInvalidNumericPath(source);
+    if (invalidNumericPath) {
+      return {
+        success: false,
+        error: {
+          issues: [issue(invalidNumericPath, "Expected a finite number")],
+        },
+      };
+    }
+
+    const candidate = withDefaults(source);
 
     if (!Value.Check(ConfigSchema, candidate)) {
       const first = [...Value.Errors(ConfigSchema, candidate)][0];
@@ -151,7 +217,8 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
       },
       dispatchAuthToken: {
         type: "string",
-        description: "Bearer token for authenticating webhook dispatch requests",
+        description:
+          "Optional bearer token override for webhook dispatch auth. Sentinel auto-detects gateway auth token when available.",
       },
       hookSessionKey: {
         type: "string",
@@ -170,14 +237,14 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
           "Optional default session group key. When set, callbacks without explicit hookSessionGroup are routed to this group session.",
       },
       hookRelayDedupeWindowMs: {
-        type: "number",
+        type: "integer",
         minimum: 0,
         description:
           "Suppress duplicate relay messages for the same dedupe key within this window (milliseconds)",
         default: 120000,
       },
       hookResponseTimeoutMs: {
-        type: "number",
+        type: "integer",
         minimum: 0,
         description:
           "Milliseconds to wait for an assistant-authored hook response before optional fallback relay",
@@ -191,7 +258,7 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
         default: "concise",
       },
       hookResponseDedupeWindowMs: {
-        type: "number",
+        type: "integer",
         minimum: 0,
         description:
           "Deduplicate hook response-delivery contracts by dedupe key within this window (milliseconds)",
@@ -214,22 +281,22 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
         description: "Resource limits for watcher creation",
         properties: {
           maxWatchersTotal: {
-            type: "number",
+            type: "integer",
             description: "Maximum total watchers across all skills",
             default: 200,
           },
           maxWatchersPerSkill: {
-            type: "number",
+            type: "integer",
             description: "Maximum watchers per skill",
             default: 20,
           },
           maxConditionsPerWatcher: {
-            type: "number",
+            type: "integer",
             description: "Maximum conditions per watcher definition",
             default: 25,
           },
           maxIntervalMsFloor: {
-            type: "number",
+            type: "integer",
             description: "Minimum allowed polling interval in milliseconds",
             default: 1000,
           },
@@ -248,7 +315,7 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
     },
     dispatchAuthToken: {
       label: "Dispatch Auth Token",
-      help: "Bearer token for webhook dispatch authentication (or use SENTINEL_DISPATCH_TOKEN env var)",
+      help: "Optional override for webhook dispatch auth token. Sentinel auto-detects gateway auth token when available (or use SENTINEL_DISPATCH_TOKEN env var).",
       sensitive: true,
       placeholder: "sk-...",
     },

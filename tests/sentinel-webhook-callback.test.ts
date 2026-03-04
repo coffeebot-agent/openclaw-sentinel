@@ -12,9 +12,13 @@ type MockRes = {
 
 type HookHandler = (event: any, ctx: any) => void | Promise<void>;
 
-function makeReq(method: string, body?: string) {
-  const req = new PassThrough() as PassThrough & { method: string };
+function makeReq(method: string, body?: string, headers?: Record<string, string>) {
+  const req = new PassThrough() as PassThrough & {
+    method: string;
+    headers: Record<string, string>;
+  };
   req.method = method;
+  req.headers = headers ?? {};
   if (body !== undefined) req.end(body);
   else req.end();
   return req;
@@ -169,6 +173,27 @@ describe("sentinel webhook callback route", () => {
     const [, options] = mocks.enqueueSystemEvent.mock.calls[0];
     expect(options.sessionKey).toBe("agent:main:main:watcher:w-global-test");
     expect(options.sessionKey).not.toBe("agent:main:main");
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("prefers hookSessionPrefix over legacy hookSessionKey when both are set", async () => {
+    const mocks = createApiMocks();
+
+    const plugin = createSentinelPlugin({
+      hookSessionKey: "agent:main:legacy",
+      hookSessionPrefix: "agent:main:new",
+    });
+    plugin.register(mocks.api);
+
+    const route = mocks.registerHttpRoute.mock.calls[0][0];
+    const req = makeReq("POST", JSON.stringify({ watcherId: "w-priority", eventName: "evt" }));
+    const res = makeRes();
+
+    await route.handler(req as any, res as any);
+
+    const [, options] = mocks.enqueueSystemEvent.mock.calls[0];
+    expect(options.sessionKey).toBe("agent:main:new:watcher:w-priority");
+    expect(options.sessionKey).not.toContain("legacy");
     expect(res.statusCode).toBe(200);
   });
 
@@ -410,6 +435,24 @@ describe("sentinel webhook callback route", () => {
 
     expect(res.statusCode).toBe(400);
     expect(mocks.enqueueSystemEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns 415 for non-json content types", async () => {
+    const mocks = createApiMocks();
+
+    const plugin = createSentinelPlugin();
+    plugin.register(mocks.api);
+
+    const route = mocks.registerHttpRoute.mock.calls[0][0];
+    const req = makeReq("POST", JSON.stringify({ eventName: "x" }), {
+      "content-type": "text/plain",
+    });
+    const res = makeRes();
+
+    await route.handler(req as any, res as any);
+
+    expect(res.statusCode).toBe(415);
+    expect(String(res.body)).toContain("Unsupported Content-Type");
   });
 
   it("returns 500 when loop callback wiring fails", async () => {

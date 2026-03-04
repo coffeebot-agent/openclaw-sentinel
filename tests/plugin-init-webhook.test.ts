@@ -74,4 +74,32 @@ describe("plugin init webhook registration", () => {
     const audit = await plugin.manager.audit();
     expect((audit as any).allowedHosts).toEqual(["plugin.example.com"]);
   });
+
+  it("warns when allowedHosts is empty", async () => {
+    const registerHttpRoute = vi.fn();
+    const warn = vi.fn();
+
+    const plugin = createSentinelPlugin();
+    plugin.register({
+      registerTool: vi.fn(),
+      registerHttpRoute,
+      logger: { warn, info: vi.fn(), error: vi.fn() },
+    } as any);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("allowedHosts is empty"));
+  });
+
+  it("warns when deprecated hookSessionKey is configured", async () => {
+    const registerHttpRoute = vi.fn();
+    const warn = vi.fn();
+
+    const plugin = createSentinelPlugin({ hookSessionKey: "agent:main:legacy" });
+    plugin.register({
+      registerTool: vi.fn(),
+      registerHttpRoute,
+      logger: { warn, info: vi.fn(), error: vi.fn() },
+    } as any);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("hookSessionKey is deprecated"));
+  });
 });

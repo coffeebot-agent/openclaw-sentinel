@@ -19,7 +19,7 @@
       },
       "dispatchAuthToken": {
         "type": "string",
-        "description": "Bearer token for authenticating webhook dispatch requests"
+        "description": "Optional bearer token override for webhook dispatch auth. Sentinel auto-detects gateway auth token when available."
       },
       "hookSessionKey": {
         "type": "string",
@@ -35,7 +35,7 @@
         "description": "Optional default session group key. When set, callbacks without explicit hookSessionGroup are routed to this group session."
       },
       "hookRelayDedupeWindowMs": {
-        "type": "number",
+        "type": "integer",
         "minimum": 0,
         "description": "Suppress duplicate relay messages for the same dedupe key within this window (milliseconds)",
         "default": 120000
@@ -56,29 +56,29 @@
         "description": "Resource limits for watcher creation",
         "properties": {
           "maxWatchersTotal": {
-            "type": "number",
+            "type": "integer",
             "description": "Maximum total watchers across all skills",
             "default": 200
           },
           "maxWatchersPerSkill": {
-            "type": "number",
+            "type": "integer",
             "description": "Maximum watchers per skill",
             "default": 20
           },
           "maxConditionsPerWatcher": {
-            "type": "number",
+            "type": "integer",
             "description": "Maximum conditions per watcher definition",
             "default": 25
           },
           "maxIntervalMsFloor": {
-            "type": "number",
+            "type": "integer",
             "description": "Minimum allowed polling interval in milliseconds",
             "default": 1000
           }
         }
       },
       "hookResponseTimeoutMs": {
-        "type": "number",
+        "type": "integer",
         "minimum": 0,
         "description": "Milliseconds to wait for an assistant-authored hook response before optional fallback relay",
         "default": 30000
@@ -90,7 +90,7 @@
         "default": "concise"
       },
       "hookResponseDedupeWindowMs": {
-        "type": "number",
+        "type": "integer",
         "minimum": 0,
         "description": "Deduplicate hook response-delivery contracts by dedupe key within this window (milliseconds)",
         "default": 120000
@@ -108,7 +108,7 @@
     },
     "dispatchAuthToken": {
       "label": "Dispatch Auth Token",
-      "help": "Bearer token for webhook dispatch authentication",
+      "help": "Optional override for webhook dispatch authentication. Sentinel auto-detects gateway auth token when available.",
       "sensitive": true,
       "placeholder": "sk-..."
     },

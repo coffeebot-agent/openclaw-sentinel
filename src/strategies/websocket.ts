@@ -1,6 +1,8 @@
 import WebSocket from "ws";
 import { StrategyHandler } from "./base.js";
 
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
+
 export const websocketStrategy: StrategyHandler = async (
   watcher,
   onPayload,
@@ -9,15 +11,43 @@ export const websocketStrategy: StrategyHandler = async (
 ) => {
   let active = true;
   let ws: WebSocket | null = null;
+  let connectTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearConnectTimer = () => {
+    if (!connectTimer) return;
+    clearTimeout(connectTimer);
+    connectTimer = undefined;
+  };
+
+  const connectTimeoutMs = Math.max(1, watcher.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
 
   const connect = () => {
     let pendingError: Error | null = null;
     let failureReported = false;
 
-    ws = new WebSocket(watcher.endpoint, { headers: watcher.headers });
+    const reportFailure = (reason: Error) => {
+      if (!active || failureReported) return;
+      failureReported = true;
+      clearConnectTimer();
+      void onError(reason);
+    };
+
+    ws = new WebSocket(watcher.endpoint, {
+      headers: watcher.headers,
+      handshakeTimeout: connectTimeoutMs,
+    });
+
+    connectTimer = setTimeout(() => {
+      if (!active || !ws) return;
+      if (ws.readyState === WebSocket.CONNECTING) {
+        pendingError = new Error(`websocket connect timeout after ${connectTimeoutMs}ms`);
+        ws.terminate();
+      }
+    }, connectTimeoutMs);
 
     ws.on("open", () => {
       if (!active) return;
+      clearConnectTimer();
       callbacks?.onConnect?.();
     });
 
@@ -37,10 +67,9 @@ export const websocketStrategy: StrategyHandler = async (
     });
 
     ws.on("close", (code) => {
-      if (!active || failureReported) return;
-      failureReported = true;
+      if (!active) return;
       const reason = pendingError?.message ?? `websocket closed: ${code}`;
-      void onError(new Error(reason));
+      reportFailure(new Error(reason));
     });
   };
 
@@ -48,6 +77,16 @@ export const websocketStrategy: StrategyHandler = async (
 
   return async () => {
     active = false;
-    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+    clearConnectTimer();
+    if (!ws) return;
+
+    if (ws.readyState === WebSocket.CONNECTING) {
+      ws.terminate();
+      return;
+    }
+
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close();
+    }
   };
 };

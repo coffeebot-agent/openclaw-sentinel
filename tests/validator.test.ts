@@ -67,6 +67,18 @@ describe("validator", () => {
     expect(watcher.fire.notificationPayloadMode).toBe("none");
   });
 
+  it("rejects watcher ids with invalid characters", () => {
+    expect(() => validateWatcherDefinition({ ...base, id: "../../etc/passwd" })).toThrow(
+      /Invalid watcher definition/,
+    );
+  });
+
+  it("rejects watcher ids that exceed 128 characters", () => {
+    expect(() => validateWatcherDefinition({ ...base, id: "a".repeat(129) })).toThrow(
+      /Invalid watcher definition/,
+    );
+  });
+
   it("rejects unknown fields", () => {
     expect(() => validateWatcherDefinition({ ...base, rogue: true })).toThrow();
   });

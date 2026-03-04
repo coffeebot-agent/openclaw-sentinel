@@ -26,7 +26,10 @@ In config, you **must** set `allowedHosts` — no hosts are allowed by default. 
           hookResponseFallbackMode: "concise",
           hookResponseDedupeWindowMs: 120000,
           notificationPayloadMode: "concise",
-          // optional legacy alias (supported): hookSessionKey: "agent:main:hooks:sentinel",
+          // Optional explicit override; usually unnecessary because Sentinel auto-detects
+          // gateway auth token from runtime config when available.
+          // dispatchAuthToken: "<gateway-token>",
+          // optional legacy alias (supported, deprecated): hookSessionKey: "agent:main:hooks:sentinel",
         },
       },
     },
@@ -38,6 +41,13 @@ In config, you **must** set `allowedHosts` — no hosts are allowed by default. 
 
 If config validation says `Unrecognized key: "sentinel"`, you are using the legacy root-level key.
 Move the config to `plugins.entries.openclaw-sentinel.config`.
+
+### Hardening behavior changes
+
+- `hookSessionKey` remains supported but deprecated; if both are set, `hookSessionPrefix` takes precedence.
+- HTTP-based strategies reject redirects (`redirect: "error"`) to prevent host allowlist bypass.
+- Watcher IDs must match `^[A-Za-z0-9_-]{1,128}$`.
+- `/hooks/sentinel` rejects unsupported `Content-Type` values with HTTP 415.
 
 ---
 

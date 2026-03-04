@@ -88,6 +88,8 @@ export interface WatcherRuntimeState {
   lastConnectAt?: string;
   lastDisconnectAt?: string;
   lastDisconnectReason?: string;
+  lastDispatchError?: string;
+  lastDispatchErrorAt?: string;
   lastDelivery?: {
     attemptedAt: string;
     successCount: number;

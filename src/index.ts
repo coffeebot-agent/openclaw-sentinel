@@ -16,6 +16,7 @@ const DEFAULT_HOOK_SESSION_PREFIX = "agent:main:hooks:sentinel";
 const DEFAULT_RELAY_DEDUPE_WINDOW_MS = 120_000;
 const DEFAULT_HOOK_RESPONSE_TIMEOUT_MS = 30_000;
 const DEFAULT_HOOK_RESPONSE_FALLBACK_MODE: HookResponseFallbackMode = "concise";
+const HOOK_RESPONSE_RELAY_CLEANUP_INTERVAL_MS = 60_000;
 const MAX_SENTINEL_WEBHOOK_BODY_BYTES = 64 * 1024;
 const MAX_SENTINEL_WEBHOOK_TEXT_CHARS = 8000;
 const MAX_SENTINEL_PAYLOAD_JSON_CHARS = 2500;
@@ -105,23 +106,59 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function sniffGatewayDispatchToken(
+  configRoot: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!configRoot) return undefined;
+
+  const auth = isRecord(configRoot.auth) ? configRoot.auth : undefined;
+  const gateway = isRecord(configRoot.gateway) ? configRoot.gateway : undefined;
+  const gatewayAuth = gateway && isRecord(gateway.auth) ? gateway.auth : undefined;
+  const server = isRecord(configRoot.server) ? configRoot.server : undefined;
+  const serverAuth = server && isRecord(server.auth) ? server.auth : undefined;
+
+  const candidates: unknown[] = [
+    auth?.token,
+    gateway?.authToken,
+    gatewayAuth?.token,
+    serverAuth?.token,
+    configRoot.gatewayAuthToken,
+    configRoot.authToken,
+  ];
+
+  for (const candidate of candidates) {
+    const token = asString(candidate);
+    if (token) return token;
+  }
+
+  return undefined;
+}
+
 function resolveSentinelPluginConfig(api: OpenClawPluginApi): Partial<SentinelConfig> {
   const pluginConfig = isRecord(api.pluginConfig)
-    ? (api.pluginConfig as Partial<SentinelConfig>)
+    ? ({ ...api.pluginConfig } as Partial<SentinelConfig>)
     : {};
 
   const configRoot = isRecord(api.config) ? (api.config as Record<string, unknown>) : undefined;
   const legacyRootConfig = configRoot?.sentinel;
-  if (legacyRootConfig === undefined) return pluginConfig;
 
-  api.logger?.warn?.(
-    '[openclaw-sentinel] Detected deprecated root-level config key "sentinel". Move settings to plugins.entries.openclaw-sentinel.config. Root-level "sentinel" may fail with: Unrecognized key: "sentinel".',
-  );
+  let resolved: Partial<SentinelConfig> = pluginConfig;
+  if (legacyRootConfig !== undefined) {
+    api.logger?.warn?.(
+      '[openclaw-sentinel] Detected deprecated root-level config key "sentinel". Move settings to plugins.entries.openclaw-sentinel.config. Root-level "sentinel" may fail with: Unrecognized key: "sentinel".',
+    );
 
-  if (!isRecord(legacyRootConfig)) return pluginConfig;
-  if (Object.keys(pluginConfig).length > 0) return pluginConfig;
+    if (isRecord(legacyRootConfig) && Object.keys(pluginConfig).length === 0) {
+      resolved = { ...(legacyRootConfig as Partial<SentinelConfig>) };
+    }
+  }
 
-  return legacyRootConfig as Partial<SentinelConfig>;
+  if (!asString(resolved.dispatchAuthToken)) {
+    const sniffedToken = sniffGatewayDispatchToken(configRoot);
+    if (sniffedToken) resolved.dispatchAuthToken = sniffedToken;
+  }
+
+  return resolved;
 }
 
 function isDeliveryTarget(value: unknown): value is DeliveryTarget {
@@ -450,10 +487,14 @@ function buildIsolatedHookSessionKey(
   envelope: SentinelEventEnvelope,
   config: SentinelConfig,
 ): string {
-  const rawPrefix =
-    asString(config.hookSessionKey) ??
-    asString(config.hookSessionPrefix) ??
-    DEFAULT_HOOK_SESSION_PREFIX;
+  const configuredPrefix = asString(config.hookSessionPrefix);
+  const legacyPrefix = asString(config.hookSessionKey);
+  const hasCustomPrefix =
+    typeof configuredPrefix === "string" && configuredPrefix !== DEFAULT_HOOK_SESSION_PREFIX;
+
+  const rawPrefix = hasCustomPrefix
+    ? configuredPrefix
+    : (legacyPrefix ?? configuredPrefix ?? DEFAULT_HOOK_SESSION_PREFIX);
   const prefix = rawPrefix.replace(/:+$/g, "");
 
   const group = asString(envelope.hookSessionGroup) ?? asString(config.hookSessionGroup);
@@ -472,9 +513,32 @@ function buildIsolatedHookSessionKey(
   return `${prefix}:event:unknown`;
 }
 
+function assertJsonContentType(req: IncomingMessage): void {
+  const raw = req.headers["content-type"];
+  const header = Array.isArray(raw) ? raw[0] : raw;
+  if (!header) return;
+
+  const normalized = header.toLowerCase();
+  const isJson =
+    normalized.includes("application/json") ||
+    normalized.includes("application/cloudevents+json") ||
+    normalized.includes("+json");
+
+  if (!isJson) {
+    throw new Error(`Unsupported Content-Type: ${header}`);
+  }
+}
+
 async function readSentinelWebhookPayload(req: IncomingMessage): Promise<Record<string, unknown>> {
+  assertJsonContentType(req);
+
   const preParsed = (req as { body?: unknown }).body;
-  if (isRecord(preParsed)) return preParsed;
+  if (preParsed !== undefined) {
+    if (!isRecord(preParsed)) {
+      throw new Error("Payload must be a JSON object");
+    }
+    return preParsed;
+  }
 
   const chunks: Buffer[] = [];
   let total = 0;
@@ -582,6 +646,8 @@ class HookResponseRelayManager {
   private recentByDedupe = new Map<string, number>();
   private pendingByDedupe = new Map<string, PendingHookResponse>();
   private pendingQueueBySession = new Map<string, string[]>();
+  private cleanupTimer?: ReturnType<typeof setTimeout>;
+  private disposed = false;
 
   constructor(
     private readonly config: SentinelConfig,
@@ -594,17 +660,10 @@ class HookResponseRelayManager {
     relayTargets: DeliveryTarget[];
     fallbackMessage: string;
   }): RelayDeliverySummary {
+    this.cleanup();
+
     const dedupeWindowMs = resolveHookResponseDedupeWindowMs(this.config);
     const now = Date.now();
-
-    if (dedupeWindowMs > 0) {
-      for (const [key, ts] of this.recentByDedupe.entries()) {
-        if (now - ts > dedupeWindowMs) {
-          this.recentByDedupe.delete(key);
-          this.pendingByDedupe.delete(key);
-        }
-      }
-    }
 
     const existingTs = this.recentByDedupe.get(args.dedupeKey);
     if (
@@ -625,6 +684,7 @@ class HookResponseRelayManager {
     }
 
     this.recentByDedupe.set(args.dedupeKey, now);
+    this.scheduleCleanup();
 
     const timeoutMs = resolveHookResponseTimeoutMs(this.config);
     const fallbackMode = resolveHookResponseFallbackMode(this.config);
@@ -693,6 +753,75 @@ class HookResponseRelayManager {
     await this.completeWithMessage(pending, assistantMessage, "assistant");
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+
+    if (this.cleanupTimer) {
+      clearTimeout(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
+
+    for (const pending of this.pendingByDedupe.values()) {
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+        pending.timer = undefined;
+      }
+    }
+
+    this.pendingByDedupe.clear();
+    this.pendingQueueBySession.clear();
+    this.recentByDedupe.clear();
+  }
+
+  private scheduleCleanup(): void {
+    if (this.disposed || this.cleanupTimer) return;
+
+    this.cleanupTimer = setTimeout(() => {
+      this.cleanupTimer = undefined;
+      this.cleanup();
+    }, HOOK_RESPONSE_RELAY_CLEANUP_INTERVAL_MS);
+
+    this.cleanupTimer.unref?.();
+  }
+
+  private cleanup(now = Date.now()): void {
+    const dedupeWindowMs = resolveHookResponseDedupeWindowMs(this.config);
+
+    if (dedupeWindowMs > 0) {
+      for (const [key, ts] of this.recentByDedupe.entries()) {
+        if (now - ts > dedupeWindowMs) {
+          this.recentByDedupe.delete(key);
+        }
+      }
+    }
+
+    for (const [key, pending] of this.pendingByDedupe.entries()) {
+      const gcAfterMs = Math.max(pending.timeoutMs, dedupeWindowMs, 1_000);
+      if (pending.state !== "pending" && now - pending.createdAt > gcAfterMs) {
+        this.pendingByDedupe.delete(key);
+        this.removeFromSessionQueue(pending.sessionKey, key);
+      }
+    }
+
+    if (this.pendingByDedupe.size > 0 || this.recentByDedupe.size > 0) {
+      this.scheduleCleanup();
+    }
+  }
+
+  private removeFromSessionQueue(sessionKey: string, dedupeKey: string): void {
+    const queue = this.pendingQueueBySession.get(sessionKey);
+    if (!queue || queue.length === 0) return;
+
+    const filtered = queue.filter((key) => key !== dedupeKey);
+    if (filtered.length === 0) {
+      this.pendingQueueBySession.delete(sessionKey);
+      return;
+    }
+
+    this.pendingQueueBySession.set(sessionKey, filtered);
+  }
+
   private popNextPendingDedupe(sessionKey: string): string | undefined {
     const queue = this.pendingQueueBySession.get(sessionKey);
     if (!queue || queue.length === 0) return undefined;
@@ -752,7 +881,7 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
   const config: SentinelConfig = {
     allowedHosts: [],
     localDispatchBase: "http://127.0.0.1:18789",
-    dispatchAuthToken: process.env.SENTINEL_DISPATCH_TOKEN,
+    dispatchAuthToken: asString(process.env.SENTINEL_DISPATCH_TOKEN),
     hookSessionPrefix: DEFAULT_HOOK_SESSION_PREFIX,
     hookRelayDedupeWindowMs: DEFAULT_RELAY_DEDUPE_WINDOW_MS,
     hookResponseTimeoutMs: DEFAULT_HOOK_RESPONSE_TIMEOUT_MS,
@@ -772,11 +901,27 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
     async dispatch(path, body) {
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (config.dispatchAuthToken) headers.authorization = `Bearer ${config.dispatchAuthToken}`;
-      await fetch(`${config.localDispatchBase}${path}`, {
+
+      const response = await fetch(`${config.localDispatchBase}${path}`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
       });
+
+      if (!response.ok) {
+        let responseBody = "";
+        try {
+          responseBody = await response.text();
+        } catch {
+          responseBody = "";
+        }
+        const details = responseBody ? ` body=${trimText(responseBody, 256)}` : "";
+        const error = new Error(
+          `dispatch failed with status ${response.status}${details}`,
+        ) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
+      }
     },
   });
 
@@ -788,13 +933,26 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
     register(api: OpenClawPluginApi) {
       const runtimeConfig = resolveSentinelPluginConfig(api);
       if (Object.keys(runtimeConfig).length > 0) Object.assign(config, runtimeConfig);
+      config.dispatchAuthToken = asString(config.dispatchAuthToken);
 
-      const hookResponseRelayManager = new HookResponseRelayManager(config, api);
+      manager.setLogger(api.logger);
 
-      if (typeof api.on === "function") {
-        api.on("llm_output", (event, ctx) => {
-          void hookResponseRelayManager.handleLlmOutput(ctx?.sessionKey, event.assistantTexts);
-        });
+      if (Array.isArray(config.allowedHosts) && config.allowedHosts.length === 0) {
+        api.logger?.warn?.(
+          "[openclaw-sentinel] allowedHosts is empty. Watcher creation will fail until at least one host is configured.",
+        );
+      }
+
+      const hasLegacyHookSessionKey = !!asString(config.hookSessionKey);
+      const hasCustomHookSessionPrefix =
+        !!asString(config.hookSessionPrefix) &&
+        asString(config.hookSessionPrefix) !== DEFAULT_HOOK_SESSION_PREFIX;
+      if (hasLegacyHookSessionKey) {
+        api.logger?.warn?.(
+          hasCustomHookSessionPrefix
+            ? "[openclaw-sentinel] hookSessionKey is deprecated and ignored when hookSessionPrefix is set. Remove hookSessionKey from config."
+            : "[openclaw-sentinel] hookSessionKey is deprecated. Rename it to hookSessionPrefix.",
+        );
       }
 
       manager.setNotifier({
@@ -821,6 +979,13 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
       if (registeredPaths.has(path)) {
         manager.setWebhookRegistrationStatus("ok", "Route already registered (idempotent)", path);
         return;
+      }
+
+      const hookResponseRelayManager = new HookResponseRelayManager(config, api);
+      if (typeof api.on === "function") {
+        api.on("llm_output", (event, ctx) => {
+          void hookResponseRelayManager.handleLlmOutput(ctx?.sessionKey, event.assistantTexts);
+        });
       }
 
       try {
@@ -873,7 +1038,14 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
               const badRequest =
                 message.includes("Invalid JSON payload") ||
                 message.includes("Payload must be a JSON object");
-              const status = message.includes("too large") ? 413 : badRequest ? 400 : 500;
+              const unsupportedMediaType = message.includes("Unsupported Content-Type");
+              const status = message.includes("too large")
+                ? 413
+                : unsupportedMediaType
+                  ? 415
+                  : badRequest
+                    ? 400
+                    : 500;
               res.writeHead(status, { "content-type": "application/json" });
               res.end(JSON.stringify({ error: message }));
             }
@@ -883,6 +1055,7 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
         manager.setWebhookRegistrationStatus("ok", "Route registered", path);
         api.logger?.info?.(`[openclaw-sentinel] Registered default webhook route ${path}`);
       } catch (err) {
+        hookResponseRelayManager.dispose();
         const msg = `Failed to register default webhook route ${path}: ${String((err as Error)?.message ?? err)}`;
         manager.setWebhookRegistrationStatus("error", msg, path);
         api.logger?.error?.(`[openclaw-sentinel] ${msg}`);
@@ -899,8 +1072,8 @@ const sentinelPlugin = {
   configSchema: sentinelConfigSchema,
   register(api: OpenClawPluginApi) {
     const plugin = createSentinelPlugin(api.pluginConfig as Partial<SentinelConfig>);
-    void plugin.init();
     plugin.register(api);
+    void plugin.init();
   },
 };
 

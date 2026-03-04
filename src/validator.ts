@@ -8,6 +8,8 @@ const TemplateValueRefSchema = Type.Ref(TemplateValueSchema);
 const codeyKeyPattern = /(script|code|eval|handler|function|import|require)/i;
 const codeyValuePattern = /(=>|\bfunction\b|\bimport\s+|\brequire\s*\(|\beval\s*\()/i;
 
+const WATCHER_ID_PATTERN = "^[A-Za-z0-9_-]{1,128}$";
+
 const ConditionSchema = Type.Object(
   {
     path: Type.String({ minLength: 1 }),
@@ -31,7 +33,7 @@ const ConditionSchema = Type.Object(
 
 export const WatcherSchema = Type.Object(
   {
-    id: Type.String({ minLength: 1 }),
+    id: Type.String({ pattern: WATCHER_ID_PATTERN, maxLength: 128 }),
     skillId: Type.String({ minLength: 1 }),
     enabled: Type.Boolean(),
     strategy: Type.Union([

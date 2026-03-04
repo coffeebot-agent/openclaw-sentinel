@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { Condition } from "./types.js";
+import { getPath } from "./utils.js";
 
 const require = createRequire(import.meta.url);
 
@@ -29,10 +30,6 @@ function getSafeRegexCtor(): RegexCtor {
   } catch {
     throw new Error("No safe regex engine available (re2/re2-wasm)");
   }
-}
-
-function getPath(obj: unknown, path: string): unknown {
-  return path.split(".").reduce((acc: any, part) => acc?.[part], obj as any);
 }
 
 function safeRegexTest(pattern: string, input: string): boolean {

@@ -1,9 +1,7 @@
+import { getPath } from "./utils.js";
+
 const placeholderPattern =
   /^\$\{(watcher\.(id|skillId)|event\.(name)|payload\.[a-zA-Z0-9_.-]+|timestamp)\}$/;
-
-function getPath(obj: unknown, path: string): unknown {
-  return path.split(".").reduce((acc: any, part) => acc?.[part], obj as any);
-}
 
 export type TemplateValue =
   | string

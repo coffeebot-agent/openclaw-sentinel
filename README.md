@@ -59,8 +59,9 @@ Add/update `~/.openclaw/openclaw.json`:
           // Optional legacy alias for hookSessionPrefix (still supported).
           // hookSessionKey: "agent:main:hooks:sentinel",
 
-          // Optional: bearer token used for dispatch calls back to gateway.
-          // Set this to your gateway auth token when gateway auth is enabled.
+          // Optional: explicit bearer token override for dispatch calls back to gateway.
+          // Sentinel auto-detects gateway auth token from runtime config when available,
+          // so manual token copy is usually no longer required.
           // dispatchAuthToken: "<gateway-token>"
         },
       },
@@ -88,6 +89,13 @@ your config is using the old root-level shape. Move Sentinel config under:
 - `plugins.entries.openclaw-sentinel.config`
 
 Sentinel also logs a runtime warning when that legacy root key is still observable, but it never writes a root-level `sentinel` key.
+
+### Hardening notes (0.6 minor)
+
+- `hookSessionKey` remains supported but is deprecated. If both are present, `hookSessionPrefix` now wins.
+- HTTP watcher strategies now set `redirect: "error"` to prevent host-allowlist bypass via redirects.
+- Watcher IDs are now constrained to `^[A-Za-z0-9_-]{1,128}$`.
+- `/hooks/sentinel` validates JSON `Content-Type` when provided and returns `415` for unsupported media types.
 
 ### 4) Create your first watcher (`sentinel_control`)
 
@@ -257,9 +265,16 @@ Global mode options:
 
 ```json5
 {
-  sentinel: {
-    allowedHosts: ["api.github.com"],
-    notificationPayloadMode: "none",
+  plugins: {
+    entries: {
+      "openclaw-sentinel": {
+        enabled: true,
+        config: {
+          allowedHosts: ["api.github.com"],
+          notificationPayloadMode: "none",
+        },
+      },
+    },
   },
 }
 ```
@@ -268,9 +283,16 @@ Global mode options:
 
 ```json5
 {
-  sentinel: {
-    allowedHosts: ["api.github.com"],
-    notificationPayloadMode: "concise",
+  plugins: {
+    entries: {
+      "openclaw-sentinel": {
+        enabled: true,
+        config: {
+          allowedHosts: ["api.github.com"],
+          notificationPayloadMode: "concise",
+        },
+      },
+    },
   },
 }
 ```
@@ -279,9 +301,16 @@ Global mode options:
 
 ```json5
 {
-  sentinel: {
-    allowedHosts: ["api.github.com"],
-    notificationPayloadMode: "debug",
+  plugins: {
+    entries: {
+      "openclaw-sentinel": {
+        enabled: true,
+        config: {
+          allowedHosts: ["api.github.com"],
+          notificationPayloadMode: "debug",
+        },
+      },
+    },
   },
 }
 ```

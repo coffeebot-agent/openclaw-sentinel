@@ -63,6 +63,12 @@ export interface WatcherNotifier {
   notify(target: DeliveryTarget, message: string): Promise<void>;
 }
 
+export interface WatcherLogger {
+  info?(message: string): void;
+  warn?(message: string): void;
+  error?(message: string): void;
+}
+
 export const backoff = (base: number, max: number, failures: number): number => {
   const raw = Math.min(max, base * 2 ** failures);
   const jitter = Math.floor(raw * 0.25 * (Math.random() * 2 - 1));
@@ -75,6 +81,7 @@ export class WatcherManager {
   private stops = new Map<string, () => void | Promise<void>>();
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private statePath: string;
+  private logger?: WatcherLogger;
   private webhookRegistration: {
     path: string;
     status: "pending" | "ok" | "error";
@@ -114,6 +121,8 @@ export class WatcherManager {
           lastEvaluated: prev?.lastEvaluated,
           lastPayloadHash: prev?.lastPayloadHash,
           lastPayload: prev?.lastPayload,
+          lastDispatchError: prev?.lastDispatchError,
+          lastDispatchErrorAt: prev?.lastDispatchErrorAt,
         };
       }
     }
@@ -145,6 +154,10 @@ export class WatcherManager {
 
   setNotifier(notifier: WatcherNotifier | undefined): void {
     this.notifier = notifier;
+  }
+
+  setLogger(logger: WatcherLogger | undefined): void {
+    this.logger = logger;
   }
 
   setWebhookRegistrationStatus(status: "ok" | "error", message?: string, path?: string): void {
@@ -265,46 +278,69 @@ export class WatcherManager {
             matchedAt,
             webhookPath,
           });
-          await this.dispatcher.dispatch(webhookPath, body);
+          let dispatchSucceeded = false;
+          try {
+            await this.dispatcher.dispatch(webhookPath, body);
+            dispatchSucceeded = true;
+            rt.lastDispatchError = undefined;
+            rt.lastDispatchErrorAt = undefined;
+          } catch (err) {
+            const message = String((err as Error)?.message ?? err);
+            const status = (err as { status?: unknown })?.status;
+            rt.lastDispatchError = message;
+            rt.lastDispatchErrorAt = new Date().toISOString();
+            rt.lastError = message;
 
-          const deliveryMode = resolveNotificationPayloadMode(this.config, watcher);
-          const isSentinelWebhook = webhookPath === DEFAULT_SENTINEL_WEBHOOK_PATH;
-          if (
-            deliveryMode !== "none" &&
-            watcher.deliveryTargets?.length &&
-            this.notifier &&
-            !isSentinelWebhook
-          ) {
-            const attemptedAt = new Date().toISOString();
-            const message = buildDeliveryNotificationMessage(watcher, body, deliveryMode);
-            const failures: Array<{ target: DeliveryTarget; error: string }> = [];
-            let successCount = 0;
-
-            await Promise.all(
-              watcher.deliveryTargets.map(async (target) => {
-                try {
-                  await this.notifier?.notify(target, message);
-                  successCount += 1;
-                } catch (err) {
-                  failures.push({
-                    target,
-                    error: String((err as Error)?.message ?? err),
-                  });
-                }
-              }),
+            this.logger?.warn?.(
+              `[openclaw-sentinel] Dispatch failed for watcher=${watcher.id} webhookPath=${webhookPath}: ${message}`,
             );
-
-            rt.lastDelivery = {
-              attemptedAt,
-              successCount,
-              failureCount: failures.length,
-              failures: failures.length > 0 ? failures : undefined,
-            };
+            if (status === 401 || status === 403) {
+              this.logger?.warn?.(
+                "[openclaw-sentinel] Dispatch authorization rejected (401/403). dispatchAuthToken may be missing or invalid. Sentinel now auto-detects gateway auth token when possible; explicit config/env overrides still take precedence.",
+              );
+            }
           }
 
-          if (watcher.fireOnce) {
-            watcher.enabled = false;
-            await this.stopWatcher(id);
+          if (dispatchSucceeded) {
+            const deliveryMode = resolveNotificationPayloadMode(this.config, watcher);
+            const isSentinelWebhook = webhookPath === DEFAULT_SENTINEL_WEBHOOK_PATH;
+            if (
+              deliveryMode !== "none" &&
+              watcher.deliveryTargets?.length &&
+              this.notifier &&
+              !isSentinelWebhook
+            ) {
+              const attemptedAt = new Date().toISOString();
+              const message = buildDeliveryNotificationMessage(watcher, body, deliveryMode);
+              const failures: Array<{ target: DeliveryTarget; error: string }> = [];
+              let successCount = 0;
+
+              await Promise.all(
+                watcher.deliveryTargets.map(async (target) => {
+                  try {
+                    await this.notifier?.notify(target, message);
+                    successCount += 1;
+                  } catch (err) {
+                    failures.push({
+                      target,
+                      error: String((err as Error)?.message ?? err),
+                    });
+                  }
+                }),
+              );
+
+              rt.lastDelivery = {
+                attemptedAt,
+                successCount,
+                failureCount: failures.length,
+                failures: failures.length > 0 ? failures : undefined,
+              };
+            }
+
+            if (watcher.fireOnce) {
+              watcher.enabled = false;
+              await this.stopWatcher(id);
+            }
           }
         }
         await this.persist();
