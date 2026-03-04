@@ -41,4 +41,24 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
   };
 }
 
+// OpenClaw plugin entrypoint (default plugin object with register)
+const sentinelPlugin = {
+  id: "openclaw-sentinel",
+  name: "OpenClaw Sentinel",
+  description: "Secure declarative gateway-native watcher plugin for OpenClaw",
+  register(api: {
+    registerTool: (name: string, handler: (input: unknown) => Promise<unknown>) => void;
+  }) {
+    const plugin = createSentinelPlugin();
+    // Initialize async state, then register tool.
+    // Registration is immediate; persisted watchers are started in background.
+    void plugin.init();
+    plugin.register(api);
+  },
+};
+
+export const register = sentinelPlugin.register.bind(sentinelPlugin);
+export const activate = sentinelPlugin.register.bind(sentinelPlugin);
+export default sentinelPlugin;
+
 export * from "./types.js";
