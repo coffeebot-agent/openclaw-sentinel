@@ -32,6 +32,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:smoke-install": "./scripts/smoke-install.sh",
     "lint": "tsc --noEmit",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
