@@ -57,7 +57,8 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
       }
 
       const registrarKey = api.registerHttpRoute as unknown as object;
-      const registeredPaths = registeredWebhookPathsByRegistrar.get(registrarKey) ?? new Set<string>();
+      const registeredPaths =
+        registeredWebhookPathsByRegistrar.get(registrarKey) ?? new Set<string>();
       registeredWebhookPathsByRegistrar.set(registrarKey, registeredPaths);
       if (registeredPaths.has(path)) {
         manager.setWebhookRegistrationStatus("ok", "Route already registered (idempotent)", path);
