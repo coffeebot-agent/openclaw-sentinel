@@ -5,12 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "src/**"
-      - "schema/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".changeset/**"
-      - ".github/workflows/**"
+      - "**"
       - "!README.md"
       - "!docs/**"
 
