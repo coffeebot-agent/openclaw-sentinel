@@ -1,5 +1,11 @@
 # @coffeexdev/openclaw-sentinel
 
+## 0.8.2
+
+### Patch Changes
+
+- 1764257: Add `evm-call` strategy for smart contract state polling via `eth_call` with ABI encoding/decoding
+
 ## 0.8.1
 
 ### Patch Changes
