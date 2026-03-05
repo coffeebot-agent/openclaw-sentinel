@@ -34,6 +34,7 @@
     "test": "pnpm run test:unit && pnpm run test:e2e",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:smoke": "pnpm run test:smoke-install",
     "test:smoke-install": "./scripts/smoke-install.sh",
     "lint": "tsc --noEmit",
     "format": "oxfmt --write .",

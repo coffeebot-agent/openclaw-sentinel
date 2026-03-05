@@ -12,9 +12,12 @@ on:
 permissions:
   contents: read
 
+env:
+  CI: true
+
 jobs:
-  build-and-unit:
-    name: Build + Unit Tests
+  validate:
+    name: validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,14 +46,8 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Unit tests
-        run: pnpm run test:unit
-
-      - name: OpenClaw install smoke test (packed artifact)
-        run: pnpm run test:smoke-install
-
-  e2e-tests:
-    name: E2E Tests
+  unit-tests:
+    name: unit-tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -69,6 +66,33 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        run: pnpm run test:unit
+
+  smoke-e2e:
+    name: smoke-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: OpenClaw install smoke test
+        run: pnpm run test:smoke
 
       - name: E2E tests
         run: pnpm run test:e2e
