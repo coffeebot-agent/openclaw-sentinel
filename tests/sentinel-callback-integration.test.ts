@@ -295,7 +295,7 @@ describe("sentinel callback e2e", () => {
     expect(dispatchBody.trigger).toMatchObject({ priority: "critical" });
 
     const relayedPrompt = String(enqueueSystemEvent.mock.calls[0][0] ?? "");
-    expect(relayedPrompt).toContain("Never emit control tokens");
+    expect(relayedPrompt).toContain("Do not emit control tokens");
     expect(relayedPrompt).toContain("incident_triage");
   });
 });

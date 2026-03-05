@@ -23,7 +23,6 @@ const MAX_SENTINEL_WEBHOOK_TEXT_CHARS = 8000;
 const MAX_SENTINEL_PAYLOAD_JSON_CHARS = 2500;
 const SENTINEL_CALLBACK_WAKE_REASON = "cron:sentinel-callback";
 const SENTINEL_CALLBACK_CONTEXT_KEY = "cron:sentinel-callback";
-const RESERVED_CONTROL_TOKEN_PATTERN = /\b(?:NO[\s_-]*REPLY|HEARTBEAT[\s_-]*OK)\b/gi;
 
 const SUPPORTED_DELIVERY_CHANNELS = new Set([
   "telegram",
@@ -182,9 +181,10 @@ function buildCallbackPrompt(envelope: SentinelCallbackEnvelope): string {
     "Instructions:",
     "- Review the watcher intent, event payload, and operator goal (if present).",
     "- Use sentinel_act to execute remediation actions when the situation calls for it.",
+    '- Use sentinel_act with action "notify" to send the result to delivery targets. This is the only way your response reaches the user.',
     "- Use sentinel_escalate if the situation requires user attention or is beyond your ability to resolve.",
-    "- After any actions, provide a concise user-facing summary of what happened and what was done.",
-    "- Never emit control tokens such as NO_REPLY or HEARTBEAT_OK.",
+    "- If escalating, also use sentinel_act notify to inform delivery targets of the escalation.",
+    "- Do not emit control tokens, routing directives, or internal processing notes in your text output.",
     "",
     "SENTINEL_CALLBACK_JSON:",
     JSON.stringify(callbackJson, null, 2),
@@ -204,30 +204,6 @@ function normalizeDeliveryTargets(targets: DeliveryTarget[]): DeliveryTarget[] {
     deduped.set(key, { channel, to, ...(accountId ? { accountId } : {}) });
   }
   return [...deduped.values()];
-}
-
-function normalizeControlTokenCandidate(value: string): string {
-  return value.replace(/[^a-zA-Z]/g, "").toUpperCase();
-}
-
-function sanitizeAssistantRelaySegment(value: string): string {
-  if (typeof value !== "string") return "";
-
-  const tokenCandidate = normalizeControlTokenCandidate(value.trim());
-  if (tokenCandidate === "NOREPLY" || tokenCandidate === "HEARTBEATOK") return "";
-
-  const withoutTokens = value.replace(RESERVED_CONTROL_TOKEN_PATTERN, " ").trim();
-  if (!withoutTokens) return "";
-
-  const collapsed = withoutTokens.replace(/\s+/g, " ").trim();
-  return /[a-zA-Z0-9]/.test(collapsed) ? collapsed : "";
-}
-
-function normalizeAssistantRelayText(assistantTexts: string[]): string | undefined {
-  if (!Array.isArray(assistantTexts) || assistantTexts.length === 0) return undefined;
-  const parts = assistantTexts.map(sanitizeAssistantRelaySegment).filter(Boolean);
-  if (parts.length === 0) return undefined;
-  return trimText(parts.join("\n\n"), MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
 }
 
 function resolveHookResponseDedupeWindowMs(config: SentinelConfig): number {
@@ -490,23 +466,16 @@ class HookResponseRelayManager {
     };
   }
 
-  async handleLlmOutput(sessionKey: string | undefined, assistantTexts: string[]): Promise<void> {
+  fulfill(sessionKey: string | undefined): void {
     if (!sessionKey) return;
-    if (!Array.isArray(assistantTexts) || assistantTexts.length === 0) return;
-
     const dedupeKey = this.popNextPendingDedupe(sessionKey);
     if (!dedupeKey) return;
-
     const pending = this.pendingByDedupe.get(dedupeKey);
     if (!pending || pending.state !== "pending") return;
-
-    const assistantMessage = normalizeAssistantRelayText(assistantTexts);
-    if (assistantMessage) {
-      await this.completeWithMessage(pending, assistantMessage, "assistant");
-      return;
-    }
-
-    await this.completeWithMessage(pending, pending.fallbackMessage, "guardrail");
+    this.markClosed(pending, "completed");
+    this.api.logger?.info?.(
+      `[openclaw-sentinel] Relay contract fulfilled via sentinel_act for dedupe=${dedupeKey}`,
+    );
   }
 
   dispose(): void {
@@ -606,27 +575,16 @@ class HookResponseRelayManager {
       return;
     }
 
-    await this.completeWithMessage(pending, pending.fallbackMessage, "timeout");
+    await this.completeWithMessage(pending, pending.fallbackMessage);
   }
 
-  private async completeWithMessage(
-    pending: PendingHookResponse,
-    message: string,
-    source: "assistant" | "timeout" | "guardrail",
-  ): Promise<void> {
+  private async completeWithMessage(pending: PendingHookResponse, message: string): Promise<void> {
     const delivery = await deliverMessageToTargets(this.api, pending.relayTargets, message);
 
-    this.markClosed(pending, source === "assistant" ? "completed" : "timed_out");
-
-    const action =
-      source === "assistant"
-        ? "Relayed assistant response"
-        : source === "guardrail"
-          ? "Sent guardrail fallback"
-          : "Sent timeout fallback";
+    this.markClosed(pending, "timed_out");
 
     this.api.logger?.info?.(
-      `[openclaw-sentinel] ${action} for dedupe=${pending.dedupeKey} delivered=${delivery.delivered} failed=${delivery.failed}`,
+      `[openclaw-sentinel] Sent timeout fallback for dedupe=${pending.dedupeKey} delivered=${delivery.delivered} failed=${delivery.failed}`,
     );
   }
 
@@ -748,6 +706,8 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
       registerSentinelControl(api.registerTool.bind(api), manager);
       registerSentinelActionTools(api.registerTool.bind(api), manager, api, config);
 
+      let hookResponseRelayManager: HookResponseRelayManager | undefined;
+
       if (typeof api.on === "function") {
         api.on("before_tool_call", (event, ctx) => {
           if (!isSentinelSession(ctx.sessionKey, config)) return;
@@ -762,6 +722,10 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
 
         api.on("after_tool_call", (event, ctx) => {
           if (!isSentinelSession(ctx.sessionKey, config)) return;
+
+          if (event.toolName === "sentinel_act" && !event.error) {
+            hookResponseRelayManager?.fulfill(ctx.sessionKey);
+          }
 
           api.logger?.info?.(
             `[openclaw-sentinel] Action trace: tool=${event.toolName} duration=${event.durationMs}ms error=${event.error ?? "none"}`,
@@ -787,12 +751,7 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
         return;
       }
 
-      const hookResponseRelayManager = new HookResponseRelayManager(config, api);
-      if (typeof api.on === "function") {
-        api.on("llm_output", (event, ctx) => {
-          void hookResponseRelayManager.handleLlmOutput(ctx?.sessionKey, event.assistantTexts);
-        });
-      }
+      hookResponseRelayManager = new HookResponseRelayManager(config, api);
 
       try {
         api.registerHttpRoute({

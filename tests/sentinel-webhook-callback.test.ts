@@ -233,7 +233,8 @@ describe("sentinel webhook callback route", () => {
     const [text] = mocks.enqueueSystemEvent.mock.calls[0];
     expect(String(text)).toContain("sentinel_act");
     expect(String(text)).toContain("sentinel_escalate");
-    expect(String(text)).toContain("Never emit control tokens");
+    expect(String(text)).toContain("the only way your response reaches the user");
+    expect(String(text)).toContain("Do not emit control tokens");
 
     const callbackJson = extractJsonBlock(String(text), "SENTINEL_CALLBACK_JSON:\n");
 
@@ -377,17 +378,18 @@ describe("sentinel webhook callback route", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it("relays assistant-authored hook responses back to original chat targets", async () => {
+  it("fulfills relay contract via after_tool_call when sentinel_act succeeds", async () => {
+    vi.useFakeTimers();
     const mocks = createApiMocks();
 
     const plugin = createSentinelPlugin({
       hookResponseTimeoutMs: 60_000,
-      hookResponseFallbackMode: "none",
+      hookResponseFallbackMode: "concise",
     });
     plugin.register(mocks.api);
 
-    const llmOutput = mocks.hooks.get("llm_output");
-    expect(typeof llmOutput).toBe("function");
+    const afterToolCall = mocks.hooks.get("after_tool_call");
+    expect(typeof afterToolCall).toBe("function");
 
     const route = mocks.registerHttpRoute.mock.calls[0][0];
     const req = makeReq(
@@ -419,17 +421,6 @@ describe("sentinel webhook callback route", () => {
 
     await route.handler(req as any, res as any);
 
-    expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(0);
-
-    await llmOutput?.(
-      { assistantTexts: ["BTC crossed threshold. Consider reducing exposure."] },
-      { sessionKey: "agent:main:hooks:sentinel:watcher:btc-price" },
-    );
-
-    expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(1);
-    const [, message] = mocks.sendMessageTelegram.mock.calls[0];
-    expect(String(message)).toContain("BTC crossed threshold");
-
     const body = JSON.parse(res.body ?? "{}");
     expect(body.relay).toMatchObject({
       attempted: 1,
@@ -437,120 +428,30 @@ describe("sentinel webhook callback route", () => {
       failed: 0,
       deduped: false,
       pending: true,
-      fallbackMode: "none",
     });
-  });
 
-  it("suppresses reserved control outputs and relays concise guardrail fallback", async () => {
-    const mocks = createApiMocks();
-
-    const plugin = createSentinelPlugin({
-      hookResponseTimeoutMs: 60_000,
-      hookResponseFallbackMode: "none",
-    });
-    plugin.register(mocks.api);
-
-    const llmOutput = mocks.hooks.get("llm_output");
-    const route = mocks.registerHttpRoute.mock.calls[0][0];
-    await route.handler(
-      makeReq(
-        "POST",
-        JSON.stringify(
-          makeEnvelope({
-            watcher: {
-              id: "btc-price",
-              skillId: "skills.alerts",
-              eventName: "price_alert",
-              intent: "price_alert",
-              strategy: "http-poll",
-              endpoint: "https://example.com/btc",
-              match: "all",
-              conditions: [],
-              fireOnce: false,
-              tags: [],
-            },
-            trigger: {
-              matchedAt: new Date().toISOString(),
-              dedupeKey: "hb-guard-1",
-              priority: "normal",
-            },
-            deliveryTargets: [{ channel: "telegram", to: "5613673222" }],
-          }),
-        ),
-      ) as any,
-      makeRes() as any,
-    );
-
-    await llmOutput?.(
-      { assistantTexts: ["   `NO_REPLY`   ", "HEARTBEAT_OK"] },
+    await afterToolCall?.(
+      { toolName: "sentinel_act", durationMs: 50 },
       { sessionKey: "agent:main:hooks:sentinel:watcher:btc-price" },
     );
 
-    expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(1);
-    const [, fallbackMessage] = mocks.sendMessageTelegram.mock.calls[0];
-    expect(String(fallbackMessage)).toContain("Sentinel callback: price_alert");
-    expect(String(fallbackMessage)).not.toContain("NO_REPLY");
-    expect(String(fallbackMessage)).not.toContain("HEARTBEAT_OK");
+    // Timeout should not fire after fulfill
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.runAllTimersAsync();
+
+    expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(0);
   });
 
-  it("falls back when assistant output is unusable/empty variants", async () => {
+  it("uses callback deliveryContext as fallback relay target via timeout path", async () => {
+    vi.useFakeTimers();
     const mocks = createApiMocks();
 
     const plugin = createSentinelPlugin({
-      hookResponseTimeoutMs: 60_000,
-      hookResponseFallbackMode: "none",
+      hookResponseTimeoutMs: 1000,
+      hookResponseFallbackMode: "concise",
     });
     plugin.register(mocks.api);
 
-    const llmOutput = mocks.hooks.get("llm_output");
-    const route = mocks.registerHttpRoute.mock.calls[0][0];
-
-    await route.handler(
-      makeReq(
-        "POST",
-        JSON.stringify(
-          makeEnvelope({
-            watcher: {
-              id: "empty-variant",
-              skillId: "skills.ops",
-              eventName: "service_degraded",
-              intent: "service_degraded",
-              strategy: "http-poll",
-              endpoint: "https://example.com",
-              match: "all",
-              conditions: [],
-              fireOnce: false,
-              tags: [],
-            },
-            trigger: {
-              matchedAt: new Date().toISOString(),
-              dedupeKey: "empty-out-1",
-              priority: "normal",
-            },
-            deliveryTargets: [{ channel: "telegram", to: "5613673222" }],
-          }),
-        ),
-      ) as any,
-      makeRes() as any,
-    );
-
-    await llmOutput?.(
-      { assistantTexts: ["  ", "__NO REPLY__"] },
-      { sessionKey: "agent:main:hooks:sentinel:watcher:empty-variant" },
-    );
-
-    expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(1);
-    const [, fallbackMessage] = mocks.sendMessageTelegram.mock.calls[0];
-    expect(String(fallbackMessage)).toContain("Sentinel callback: service_degraded");
-  });
-
-  it("uses callback deliveryContext as fallback relay target when deliveryTargets are absent", async () => {
-    const mocks = createApiMocks();
-
-    const plugin = createSentinelPlugin({ hookResponseFallbackMode: "none" });
-    plugin.register(mocks.api);
-
-    const llmOutput = mocks.hooks.get("llm_output");
     const route = mocks.registerHttpRoute.mock.calls[0][0];
 
     await route.handler(
@@ -586,10 +487,8 @@ describe("sentinel webhook callback route", () => {
       makeRes() as any,
     );
 
-    await llmOutput?.(
-      { assistantTexts: ["Context-based response routing works."] },
-      { sessionKey: "agent:main:hooks:sentinel:watcher:from-context" },
-    );
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.runAllTimersAsync();
 
     expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(1);
     const [to] = mocks.sendMessageTelegram.mock.calls[0];
@@ -647,15 +546,17 @@ describe("sentinel webhook callback route", () => {
   });
 
   it("suppresses duplicate response contracts using dedupe key", async () => {
+    vi.useFakeTimers();
     const mocks = createApiMocks();
 
     const plugin = createSentinelPlugin({
       hookResponseDedupeWindowMs: 60_000,
-      hookResponseFallbackMode: "none",
+      hookResponseTimeoutMs: 60_000,
+      hookResponseFallbackMode: "concise",
     });
     plugin.register(mocks.api);
 
-    const llmOutput = mocks.hooks.get("llm_output");
+    const afterToolCall = mocks.hooks.get("after_tool_call");
     const route = mocks.registerHttpRoute.mock.calls[0][0];
 
     const payload = makeEnvelope({
@@ -683,12 +584,16 @@ describe("sentinel webhook callback route", () => {
     const res2 = makeRes();
     await route.handler(makeReq("POST", JSON.stringify(payload)) as any, res2 as any);
 
-    await llmOutput?.(
-      { assistantTexts: ["single response despite duplicate callback"] },
+    await afterToolCall?.(
+      { toolName: "sentinel_act", durationMs: 50 },
       { sessionKey: "agent:main:hooks:sentinel:watcher:btc-price" },
     );
 
-    expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(1);
+    // Timeout should not fire after fulfill
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.runAllTimersAsync();
+
+    expect(mocks.sendMessageTelegram).toHaveBeenCalledTimes(0);
     expect(JSON.parse(res2.body ?? "{}").relay).toMatchObject({
       attempted: 1,
       deduped: true,

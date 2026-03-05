@@ -511,13 +511,12 @@ describe("sentinel runtime callback e2e", () => {
     expect(payloadText).toContain("deliveryTargets");
     expect(payloadText).toContain("currentPrice");
 
+    // Mock model does not call sentinel_act, so timeout fallback should fire
     await waitFor(
-      "assistant relay completion",
+      "timeout fallback relay",
       () => {
         const line = gatewayLogs.find((entry) =>
-          entry.includes(
-            `Relayed assistant response for dedupe=${callbackResponse.relay.dedupeKey}`,
-          ),
+          entry.includes(`Sent timeout fallback for dedupe=${callbackResponse.relay.dedupeKey}`),
         );
         return line;
       },
@@ -526,7 +525,7 @@ describe("sentinel runtime callback e2e", () => {
     );
   }, 120_000);
 
-  it("suppresses control tokens and uses guardrail relay fallback in live runtime", async () => {
+  it("fires timeout fallback when LLM does not call sentinel_act in live runtime", async () => {
     const modelServer = requireModelServer();
     const initialCount = modelServer.requests.length;
     modelServer.enqueueAssistantText("NO_REPLY");
@@ -544,7 +543,7 @@ describe("sentinel runtime callback e2e", () => {
     expect(callbackResponse.relay.pending).toBe(true);
 
     await waitFor(
-      "runtime model request for control-token callback",
+      "runtime model request for callback",
       () => {
         if (modelServer.requests.length <= initialCount) return undefined;
         return modelServer.requests.at(-1);
@@ -553,24 +552,17 @@ describe("sentinel runtime callback e2e", () => {
       100,
     );
 
+    // No sentinel_act called, so timeout fallback fires
     await waitFor(
-      "guardrail fallback relay",
+      "timeout fallback relay",
       () => {
         const line = gatewayLogs.find((entry) =>
-          entry.includes(`Sent guardrail fallback for dedupe=${callbackResponse.relay.dedupeKey}`),
+          entry.includes(`Sent timeout fallback for dedupe=${callbackResponse.relay.dedupeKey}`),
         );
         return line;
       },
       20_000,
       100,
     );
-
-    const sameDedupeLogs = gatewayLogs.filter((entry) =>
-      entry.includes(`dedupe=${callbackResponse.relay.dedupeKey}`),
-    );
-    const relayedAsAssistant = sameDedupeLogs.some((entry) =>
-      entry.includes("Relayed assistant response"),
-    );
-    expect(relayedAsAssistant).toBe(false);
   }, 120_000);
 });

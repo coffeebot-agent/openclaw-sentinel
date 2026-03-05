@@ -57,8 +57,8 @@ Move the config to `plugins.entries.openclaw-sentinel.config`.
 - Preferred shape is a callback envelope (`type: "sentinel.callback"`).
 - Sentinel prepends structured instructions for the agent to use watcher + payload context, apply policy, act safely, and return a user-facing response.
 - Callback processing is isolated by watcher session by default (`...:watcher:<id>`), with optional explicit grouping via `hookSessionGroup`.
-- Hook callbacks establish a response-delivery contract: assistant `llm_output` is relayed to original targets.
-- Reserved control outputs are suppressed (`NO_REPLY`, `HEARTBEAT_OK`, empty variants). If model output is unusable, Sentinel emits a concise contextual fallback.
+- Hook callbacks establish a response-delivery contract: `sentinel_act notify` is the sole delivery mechanism.
+- If the LLM fails to call `sentinel_act` before the timeout, Sentinel sends a concise contextual fallback.
   Example structured wake event text:
 
 ```text
@@ -67,9 +67,10 @@ SENTINEL_TRIGGER: A sentinel watcher callback has fired. Analyze the callback an
 Instructions:
 - Review the watcher intent, event payload, and operator goal (if present).
 - Use sentinel_act to execute remediation actions when the situation calls for it.
+- Use sentinel_act with action "notify" to send the result to delivery targets. This is the only way your response reaches the user.
 - Use sentinel_escalate if the situation requires user attention or is beyond your ability to resolve.
-- After any actions, provide a concise user-facing summary of what happened and what was done.
-- Never emit control tokens such as NO_REPLY or HEARTBEAT_OK.
+- If escalating, also use sentinel_act notify to inform delivery targets of the escalation.
+- Do not emit control tokens, routing directives, or internal processing notes in your text output.
 
 SENTINEL_CALLBACK_JSON:
 {
@@ -235,7 +236,7 @@ For `/hooks/sentinel`, Sentinel tracks callback-triggered response contracts sep
 
 Config knobs:
 
-- `hookResponseTimeoutMs` — wait window for assistant-authored `llm_output` relay (default `30000`).
+- `hookResponseTimeoutMs` — wait window for `sentinel_act` call before timeout fallback (default `30000`).
 - `hookResponseFallbackMode` — timeout behavior: `concise` (default fail-safe relay) or `none`.
 - `hookResponseDedupeWindowMs` — dedupe/idempotency window for repeated callback dedupe keys.
 
@@ -243,9 +244,9 @@ Flow:
 
 1. Callback is enqueued to isolated hook session.
 2. Contract stores original delivery context (`deliveryTargets` and/or `deliveryContext`).
-3. First assistant-authored output is relayed to original chat target(s).
-4. Reserved control outputs (`NO_REPLY`, `HEARTBEAT_OK`, empty variants) are suppressed. If output is unusable, Sentinel sends concise contextual guardrail fallback text.
-5. If no assistant output arrives by timeout, optional concise timeout fallback relay is sent.
+3. The LLM calls `sentinel_act notify` to deliver results to targets (sole delivery mechanism).
+4. Any successful `sentinel_act` call fulfills the relay contract and cancels the timeout timer.
+5. If no `sentinel_act` call arrives by timeout, optional concise timeout fallback relay is sent.
 6. Duplicate callbacks with same dedupe key inside dedupe window are ignored for extra relay contracts.
 
 ---

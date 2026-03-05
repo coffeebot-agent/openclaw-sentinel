@@ -372,9 +372,9 @@ Precedence: **watcher override > global setting**.
 
 1. Callback is enqueued to isolated hook session.
 2. Contract captures original delivery context (`deliveryContext` + resolved `deliveryTargets`).
-3. First assistant-authored `llm_output` for that pending callback is relayed to target chat.
-4. Reserved control outputs are never relayed (`NO_REPLY`, `HEARTBEAT_OK`, empty variants). If output is unusable, Sentinel sends a concise contextual guardrail fallback.
-5. If no assistant output arrives in time (`hookResponseTimeoutMs`), timeout fallback is configurable:
+3. The LLM calls `sentinel_act notify` to deliver results to targets (sole delivery mechanism).
+4. Any successful `sentinel_act` call fulfills the relay contract and cancels the timeout timer.
+5. If no `sentinel_act` call arrives in time (`hookResponseTimeoutMs`), timeout fallback is configurable:
    - `hookResponseFallbackMode: "concise"` (default) sends a short fail-safe relay.
    - `hookResponseFallbackMode: "none"` suppresses timeout fallback.
 6. Repeated callbacks with same dedupe key are idempotent within `hookResponseDedupeWindowMs`.
