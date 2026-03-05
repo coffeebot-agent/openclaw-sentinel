@@ -1,0 +1,6 @@
+{
+  "price": 51234.56,
+  "threshold": 50000,
+  "direction": "above",
+  "symbol": "BTC"
+}

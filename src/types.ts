@@ -19,11 +19,35 @@ export interface Condition {
 }
 
 export const DEFAULT_SENTINEL_WEBHOOK_PATH = "/hooks/sentinel";
+export const SENTINEL_CALLBACK_ENVELOPE_KEY = "__sentinelCallback";
 
 export interface FireConfig {
   webhookPath?: string;
   eventName: string;
   payloadTemplate: Record<string, string | number | boolean | null>;
+}
+
+export interface SentinelCallbackEnvelope {
+  type: "sentinel.callback";
+  version: "1";
+  intent: string;
+  actionable: true;
+  watcher: {
+    id: string;
+    skillId: string;
+    eventName: string;
+  };
+  trigger: {
+    matchedAt: string;
+    dedupeKey: string;
+    priority: "normal";
+  };
+  context: Record<string, unknown>;
+  payload: unknown;
+  source: {
+    plugin: "openclaw-sentinel";
+    route: string;
+  };
 }
 
 export interface RetryPolicy {

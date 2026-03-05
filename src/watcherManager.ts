@@ -7,9 +7,11 @@ import { httpPollStrategy } from "./strategies/httpPoll.js";
 import { httpLongPollStrategy } from "./strategies/httpLongPoll.js";
 import { sseStrategy } from "./strategies/sse.js";
 import { websocketStrategy } from "./strategies/websocket.js";
+import { createCallbackEnvelope } from "./callbackEnvelope.js";
 import {
   DEFAULT_SENTINEL_WEBHOOK_PATH,
   GatewayWebhookDispatcher,
+  SENTINEL_CALLBACK_ENVELOPE_KEY,
   SentinelConfig,
   WatcherDefinition,
   WatcherRuntimeState,
@@ -177,16 +179,26 @@ export class WatcherManager {
         rt.lastError = undefined;
         this.runtime[id] = rt;
         if (matched) {
+          const matchedAt = new Date().toISOString();
           const body = renderTemplate(watcher.fire.payloadTemplate, {
             watcher,
             event: { name: watcher.fire.eventName },
             payload,
-            timestamp: new Date().toISOString(),
+            timestamp: matchedAt,
           });
-          await this.dispatcher.dispatch(
-            watcher.fire.webhookPath ?? DEFAULT_SENTINEL_WEBHOOK_PATH,
-            body,
-          );
+          const webhookPath = watcher.fire.webhookPath ?? DEFAULT_SENTINEL_WEBHOOK_PATH;
+          const callbackEnvelope = createCallbackEnvelope({
+            watcher,
+            payload,
+            payloadBody: body,
+            matchedAt,
+            webhookPath,
+          });
+
+          await this.dispatcher.dispatch(webhookPath, {
+            ...body,
+            [SENTINEL_CALLBACK_ENVELOPE_KEY]: callbackEnvelope,
+          });
           if (watcher.fireOnce) {
             watcher.enabled = false;
             await this.stopWatcher(id);

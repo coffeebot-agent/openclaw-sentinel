@@ -1,0 +1,6 @@
+{
+  "service": "gateway-api",
+  "status": 503,
+  "latencyMs": 981,
+  "region": "us-east-1"
+}

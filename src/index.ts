@@ -2,13 +2,19 @@ import type { IncomingMessage } from "node:http";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { sentinelConfigSchema } from "./configSchema.js";
 import { registerSentinelControl } from "./tool.js";
-import { DEFAULT_SENTINEL_WEBHOOK_PATH, SentinelConfig } from "./types.js";
+import {
+  DEFAULT_SENTINEL_WEBHOOK_PATH,
+  SENTINEL_CALLBACK_ENVELOPE_KEY,
+  SentinelCallbackEnvelope,
+  SentinelConfig,
+} from "./types.js";
 import { WatcherManager } from "./watcherManager.js";
 
 const registeredWebhookPathsByRegistrar = new WeakMap<object, Set<string>>();
 const DEFAULT_HOOK_SESSION_KEY = "agent:main:main";
 const MAX_SENTINEL_WEBHOOK_BODY_BYTES = 64 * 1024;
 const MAX_SENTINEL_WEBHOOK_TEXT_CHARS = 2000;
+const CONTROL_TOKEN_PATTERN = /\[?\s*NO_REPLY\s*\]?/gi;
 
 function normalizePath(path: string): string {
   const trimmed = path.trim();
@@ -31,9 +37,69 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function sanitizeControlTokens(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const sanitized = value.replaceAll(CONTROL_TOKEN_PATTERN, " ").replace(/\s+/g, " ").trim();
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function asCallbackEnvelope(value: unknown): SentinelCallbackEnvelope | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.type !== "sentinel.callback" || value.version !== "1") return undefined;
+  return value as unknown as SentinelCallbackEnvelope;
+}
+
+function sanitizeContextValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    const sanitized = sanitizeControlTokens(value);
+    return sanitized ?? "";
+  }
+  if (Array.isArray(value)) return value.map((entry) => sanitizeContextValue(entry));
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, sanitizeContextValue(entry)]),
+    );
+  }
+  return value;
+}
+
+function stringifyContext(context: unknown): string {
+  try {
+    return JSON.stringify(sanitizeContextValue(context ?? {}), null, 2);
+  } catch {
+    return JSON.stringify({ value: String(context) }, null, 2);
+  }
+}
+
+function buildEnvelopeFallbackEvent(envelope: SentinelCallbackEnvelope): string {
+  const eventName = envelope.watcher.eventName;
+  const watcherId = envelope.watcher.id;
+  const contextJson = stringifyContext(envelope.context);
+
+  return trimText(
+    [
+      `Sentinel Callback: ${eventName}`,
+      "",
+      "SENTINEL_CALLBACK_CONTEXT_JSON:",
+      "```json",
+      contextJson,
+      "```",
+      "",
+      `Watcher: ${watcherId}`,
+      `MatchedAt: ${envelope.trigger.matchedAt}`,
+      `Intent: ${envelope.intent}`,
+    ].join("\n"),
+    MAX_SENTINEL_WEBHOOK_TEXT_CHARS,
+  );
+}
+
 function buildSentinelSystemEvent(payload: Record<string, unknown>): string {
-  const text = asString(payload.text) ?? asString(payload.message);
-  if (text) return trimText(text, MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
+  const rawText = asString(payload.text) ?? asString(payload.message);
+  const sanitizedText = sanitizeControlTokens(rawText);
+  if (sanitizedText) return trimText(sanitizedText, MAX_SENTINEL_WEBHOOK_TEXT_CHARS);
+
+  const envelope = asCallbackEnvelope(payload[SENTINEL_CALLBACK_ENVELOPE_KEY]);
+  if (envelope) return buildEnvelopeFallbackEvent(envelope);
 
   const watcherId = asString(payload.watcherId);
   const eventName =
