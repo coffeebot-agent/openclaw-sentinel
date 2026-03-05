@@ -1,5 +1,11 @@
 # @coffeexdev/openclaw-sentinel
 
+## 0.8.1
+
+### Patch Changes
+
+- 49c57f3: Remove llm_output relay; use sentinel_act as sole delivery mechanism. The LLM now delivers results exclusively via sentinel_act notify, eliminating double-delivery of internal reasoning text. Timeout fallback remains as safety net.
+
 ## 0.8.0
 
 ### Minor Changes
