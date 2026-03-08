@@ -608,6 +608,35 @@ function isSentinelSession(sessionKey: string | undefined, config: SentinelConfi
   return sessionKey.startsWith(prefix + ":");
 }
 
+function extractWatcherIdFromSessionKey(
+  sessionKey: string,
+  config: SentinelConfig,
+): string | undefined {
+  const prefix = (config.hookSessionPrefix ?? DEFAULT_HOOK_SESSION_PREFIX).replace(/:+$/g, "");
+  const suffix = sessionKey.slice(prefix.length + 1);
+  const watcherPrefix = "watcher:";
+  if (!suffix.startsWith(watcherPrefix)) return undefined;
+  return suffix.slice(watcherPrefix.length) || undefined;
+}
+
+function resolveHookModel(
+  sessionKey: string | undefined,
+  config: SentinelConfig,
+  manager: WatcherManager,
+): string | undefined {
+  if (!sessionKey) return asString(config.defaultHookModel);
+
+  const watcherId = extractWatcherIdFromSessionKey(sessionKey, config);
+  if (watcherId) {
+    const watchers = manager.list();
+    const watcher = watchers.find((w) => sanitizeSessionSegment(w.id) === watcherId);
+    const perWatcherModel = asString(watcher?.fire.model);
+    if (perWatcherModel) return perWatcherModel;
+  }
+
+  return asString(config.defaultHookModel);
+}
+
 const DENIED_COMMAND_PATTERNS = [
   /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+|.*\s+)\/\s*$/,
   /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f/,
@@ -714,6 +743,12 @@ export function createSentinelPlugin(overrides?: Partial<SentinelConfig>) {
       let hookResponseRelayManager: HookResponseRelayManager | undefined;
 
       if (typeof api.on === "function") {
+        api.on("before_model_resolve", (_event, ctx) => {
+          if (!isSentinelSession(ctx.sessionKey, config)) return;
+          const model = resolveHookModel(ctx.sessionKey, config, manager);
+          if (model) return { modelOverride: model };
+        });
+
         api.on("before_tool_call", (event, ctx) => {
           if (!isSentinelSession(ctx.sessionKey, config)) return;
 

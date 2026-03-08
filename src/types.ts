@@ -56,6 +56,8 @@ export interface FireConfig {
   sessionGroup?: string;
   operatorGoal?: string;
   operatorGoalFile?: string;
+  /** Override the LLM model used for this watcher's hook sessions (provider/model format). */
+  model?: string;
 }
 
 export interface SentinelCallbackEnvelope {
@@ -83,6 +85,8 @@ export interface SentinelCallbackEnvelope {
   };
   operatorGoal?: string;
   operatorGoalRuntimeContext?: string;
+  /** Resolved LLM model override for this callback's hook session. */
+  hookModel?: string;
   hookSessionGroup?: string;
   deliveryContext?: {
     sessionKey?: string;
@@ -185,6 +189,8 @@ export interface SentinelConfig {
   stateFilePath?: string;
   notificationPayloadMode?: NotificationPayloadMode;
   maxOperatorGoalChars?: number;
+  /** Default LLM model for all sentinel hook sessions (provider/model format). Per-watcher fire.model takes precedence. */
+  defaultHookModel?: string;
   limits: SentinelLimits;
 }
 

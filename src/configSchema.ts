@@ -45,6 +45,7 @@ const ConfigSchema = Type.Object(
         maximum: MAX_OPERATOR_GOAL_MAX_CHARS,
       }),
     ),
+    defaultHookModel: Type.Optional(Type.String({ minLength: 1 })),
     limits: Type.Optional(LimitsSchema),
   },
   { additionalProperties: false },
@@ -135,6 +136,7 @@ function withDefaults(value: Record<string, unknown>): Record<string, unknown> {
       typeof value.maxOperatorGoalChars === "number" && Number.isFinite(value.maxOperatorGoalChars)
         ? value.maxOperatorGoalChars
         : DEFAULT_OPERATOR_GOAL_MAX_CHARS,
+    defaultHookModel: trimToUndefined(value.defaultHookModel),
     limits: {
       maxWatchersTotal:
         typeof limitsIn.maxWatchersTotal === "number" && Number.isFinite(limitsIn.maxWatchersTotal)
@@ -299,6 +301,12 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
           "Max allowed watcher.fire.operatorGoal characters. Higher values allow richer callback guidance but increase state/prompt footprint.",
         default: DEFAULT_OPERATOR_GOAL_MAX_CHARS,
       },
+      defaultHookModel: {
+        type: "string",
+        minLength: 1,
+        description:
+          "Default LLM model for all sentinel hook sessions (provider/model format, e.g. 'anthropic/claude-sonnet-4-20250514'). Per-watcher fire.model takes precedence.",
+      },
       limits: {
         type: "object",
         additionalProperties: false,
@@ -392,6 +400,12 @@ export const sentinelConfigSchema: OpenClawPluginConfigSchema = {
       label: "Max Operator Goal Chars",
       help: `Maximum watcher.fire.operatorGoal length (default ${DEFAULT_OPERATOR_GOAL_MAX_CHARS}, min ${MIN_OPERATOR_GOAL_MAX_CHARS}, max ${MAX_OPERATOR_GOAL_MAX_CHARS})`,
       advanced: true,
+    },
+    defaultHookModel: {
+      label: "Default Hook Model",
+      help: "Default LLM model for sentinel hook sessions. Per-watcher fire.model takes precedence. Format: provider/model (e.g. anthropic/claude-sonnet-4-20250514)",
+      advanced: true,
+      placeholder: "anthropic/claude-sonnet-4-20250514",
     },
     "limits.maxWatchersTotal": {
       label: "Max Watchers",

@@ -98,6 +98,13 @@ const FireConfigSchema = Type.Object({
         "Absolute path to a policy/config file read fresh each time the watcher fires. Contents are injected as runtime context alongside operatorGoal, ensuring callbacks always use current policy values.",
     }),
   ),
+  model: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        "Override the LLM model used for this watcher's hook sessions (provider/model format, e.g. 'anthropic/claude-sonnet-4-20250514'). Takes precedence over config.defaultHookModel.",
+    }),
+  ),
 });
 
 const RetryPolicySchema = Type.Object({

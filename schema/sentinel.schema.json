@@ -103,6 +103,11 @@
           "minLength": 1,
           "pattern": "^(/|~)",
           "description": "Absolute path to a policy/config file read fresh each time the watcher fires. Contents are injected as operatorGoalRuntimeContext in the callback envelope, ensuring callbacks always use current policy values."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Override the LLM model used for this watcher's hook sessions (provider/model format). Takes precedence over config.defaultHookModel."
         }
       }
     },

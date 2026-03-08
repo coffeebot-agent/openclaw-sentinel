@@ -155,6 +155,7 @@ export function createCallbackEnvelope(args: {
     },
     ...(watcher.fire.operatorGoal ? { operatorGoal: watcher.fire.operatorGoal } : {}),
     ...(operatorGoalRuntimeContext ? { operatorGoalRuntimeContext } : {}),
+    ...(watcher.fire.model ? { hookModel: watcher.fire.model } : {}),
     ...(watcher.fire.sessionGroup ? { hookSessionGroup: watcher.fire.sessionGroup } : {}),
     ...(deliveryContext ? { deliveryContext } : {}),
     context: renderedContext ?? summarizePayload(payload),

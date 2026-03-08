@@ -210,6 +210,47 @@ When the policy changes (e.g., raising `maxBidUsd` to `75`), just update the fil
 - File content is truncated to `maxOperatorGoalChars` (default `12000`).
 - `operatorGoalFile` complements `operatorGoal` — use `operatorGoal` for static instructions and `operatorGoalFile` for dynamic policy values.
 
+### `fire.model` — per-watcher hook session model selection
+
+Sentinel hook sessions inherit the agent's default model. When the default is expensive (e.g., opus), every callback — even trivial "skip, no action" decisions — burns premium tokens.
+
+**Per-watcher override:** Set `fire.model` to use a specific model for that watcher's hook sessions:
+
+```json
+{
+  "fire": {
+    "eventName": "price_check",
+    "payloadTemplate": { "price": "${payload.price}" },
+    "model": "anthropic/claude-sonnet-4-20250514"
+  }
+}
+```
+
+**Global default:** Set `defaultHookModel` in plugin config to override the agent default for all sentinel hook sessions:
+
+```json5
+{
+  plugins: {
+    entries: {
+      "openclaw-sentinel": {
+        config: {
+          allowedHosts: ["api.example.com"],
+          defaultHookModel: "anthropic/claude-sonnet-4-20250514",
+        },
+      },
+    },
+  },
+}
+```
+
+**Resolution order:**
+
+1. Per-watcher `fire.model` (highest priority)
+2. Plugin config `defaultHookModel`
+3. Agent's default model (current behavior, lowest priority)
+
+**Use case:** An agent running opus as its primary model has sentinel watchers for auction monitoring. 95% of callbacks are "no change, skip" — these don't need opus-level reasoning. Set `defaultHookModel` to sonnet, and override individual high-stakes watchers with `fire.model: "anthropic/claude-opus-4-0"`.
+
 ---
 
 ## 3) Delivery targets (default + override)
@@ -307,6 +348,7 @@ Config knobs:
 - `hookResponseFallbackMode` — timeout behavior: `concise` (default fail-safe relay) or `none`.
 - `hookResponseDedupeWindowMs` — dedupe/idempotency window for repeated callback dedupe keys.
 - `maxOperatorGoalChars` — watcher `fire.operatorGoal` limit (default `12000`, min `500`, max `20000`).
+- `defaultHookModel` — default LLM model for all hook sessions (provider/model format). Per-watcher `fire.model` takes precedence.
 
 Flow:
 
