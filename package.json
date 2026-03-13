@@ -1,6 +1,6 @@
 {
   "name": "@coffeexdev/openclaw-sentinel",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Secure declarative gateway-native watcher plugin for OpenClaw",
   "keywords": [
     "openclaw",
